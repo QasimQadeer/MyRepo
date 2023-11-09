@@ -1,0 +1,1 @@
+This folder contains work related to calling a REST API to get gender details of cast members and load them back in a snowflake table.
