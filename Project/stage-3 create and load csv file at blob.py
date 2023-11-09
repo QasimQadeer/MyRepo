@@ -1,3 +1,7 @@
+# Pre-requisites:
+# install packages for the Azure Blob Storage and Azure Identity client libraries using the pip install command
+# pip install azure-storage-blob azure-identity
+
 import csv
 import os, uuid
 from azure.identity import DefaultAzureCredential
@@ -44,10 +48,10 @@ try:
 
     # Upload the created file
     with open(file=upload_file_path, mode="rb") as data:
-        blob_client.upload_blob(data)
+        blob_client.upload_blob(data, overwrite=True)
     
     print("\n\tFile " + local_file_name + " has been successfully uploaded to Azure Storage blob.\n")
 
-except Exception as ex:
+except Exception as details:
     print('Exception:')
-    print(ex)
+    print(details)
