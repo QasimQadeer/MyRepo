@@ -52,4 +52,11 @@ CREATE TABLE IF NOT EXISTS netflix_titles.cleansed_shows
      description  VARCHAR(5000),
      FOREIGN KEY (type_id) REFERENCES netflix_titles.show_types(type_id)
   ) cluster BY (release_year) -- Clustering key
-; 
+  ;
+
+  -- Create additional table to save gender details
+CREATE TABLE IF NOT EXISTS netflix_titles.cast_gender(
+    cast_name VARCHAR(100),
+    cast_gender VARCHAR(50)
+);
+ 

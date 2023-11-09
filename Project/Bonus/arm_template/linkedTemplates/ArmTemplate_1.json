@@ -1,0 +1,3130 @@
+{
+    "$schema": "http://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "factoryName": {
+            "type": "string",
+            "metadata": "Data Factory name",
+            "defaultValue": "dev-cc-collector-adf"
+        },
+        "Analytics_Platform_Extract_Load_Raw_properties__Master_Extract_to_Snowflake_parameters_AKV_Name": {
+            "type": "string",
+            "defaultValue": "dev-cc-collector-akv"
+        },
+        "Analytics_Platform_Extract_Load_Raw_properties__Master_Extract_to_Snowflake_parameters_Region_key": {
+            "type": "string",
+            "defaultValue": "Canada"
+        },
+        "Analytics_Platform_Extract_Load_Raw_properties__Master_Extract_to_Snowflake_parameters_Driver_Filter_Clause": {
+            "type": "string",
+            "defaultValue": "AND TRUE"
+        },
+        "Analytics_Platform_Extract_Load_Raw_properties__Master_Extract_to_Snowflake_parameters_Incremental_Merge_Load_to_Raw": {
+            "type": "bool",
+            "defaultValue": true
+        },
+        "Analytics_Platform_Extract_Load_Raw_properties__Master_Extract_to_Snowflake_parameters_Driver_Database": {
+            "type": "string",
+            "defaultValue": "DEV_PLATFORM"
+        },
+        "Analytics_Platform_Extract_Load_Raw_properties__Master_Extract_to_Snowflake_parameters_Incremental_Sync_Mask": {
+            "type": "bool",
+            "defaultValue": true
+        },
+        "Analytics_Platform_Extract_Load_Raw_properties__Master_Extract_to_Snowflake_parameters_DBT_Job_IDs": {
+            "type": "string",
+            "defaultValue": "92240"
+        },
+        "Analytics_Platform_Extract_Load_Raw_properties__Master_Extract_to_Snowflake_parameters_Auth0_Url": {
+            "type": "string",
+            "defaultValue": "https://auth-dev.symend.io/oauth/token"
+        },
+        "Analytics_Platform_Extract_Load_Raw_properties__Master_Extract_to_Snowflake_parameters_Extract_Client_Management": {
+            "type": "bool",
+            "defaultValue": true
+        }
+    },
+    "variables": {
+        "factoryId": "[concat('Microsoft.DataFactory/factories/', parameters('factoryName'))]"
+    },
+    "resources": [
+        {
+            "name": "[concat(parameters('factoryName'), '/Extract_Master_Databases')]",
+            "type": "Microsoft.DataFactory/factories/pipelines",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "activities": [
+                    {
+                        "name": "Fetch all databases name from source",
+                        "type": "Lookup",
+                        "dependsOn": [
+                            {
+                                "activity": "Source Host",
+                                "dependencyConditions": [
+                                    "Succeeded"
+                                ]
+                            }
+                        ],
+                        "policy": {
+                            "timeout": "0.00:15:00",
+                            "retry": 2,
+                            "retryIntervalInSeconds": 300,
+                            "secureOutput": false,
+                            "secureInput": false
+                        },
+                        "userProperties": [],
+                        "typeProperties": {
+                            "source": {
+                                "type": "AzureSqlSource",
+                                "sqlReaderQuery": "select STRING_AGG(lower(name), ',') as DBname from sysdatabases where lower(name) like '%_ef'",
+                                "queryTimeout": "02:00:00",
+                                "partitionOption": "None"
+                            },
+                            "dataset": {
+                                "referenceName": "Database_For_Extract",
+                                "type": "DatasetReference",
+                                "parameters": {
+                                    "Source_Endpoint": {
+                                        "value": "@activity('Source Host').output.firstRow.Source_Host",
+                                        "type": "Expression"
+                                    },
+                                    "Source_Database": "master",
+                                    "Source_Schema": "sys",
+                                    "Source_Table": "sysdatabases"
+                                }
+                            },
+                            "firstRowOnly": true
+                        }
+                    },
+                    {
+                        "name": "UPSERT databases details",
+                        "type": "Lookup",
+                        "dependsOn": [
+                            {
+                                "activity": "Fetch all databases name from source",
+                                "dependencyConditions": [
+                                    "Succeeded"
+                                ]
+                            }
+                        ],
+                        "policy": {
+                            "timeout": "0.00:15:00",
+                            "retry": 2,
+                            "retryIntervalInSeconds": 300,
+                            "secureOutput": false,
+                            "secureInput": false
+                        },
+                        "userProperties": [],
+                        "typeProperties": {
+                            "source": {
+                                "type": "SnowflakeSource",
+                                "query": {
+                                    "value": "CALL @{pipeline().parameters.Driver_Database}.COLLECTOR.UPSERT_MASTER_DATABASES\n(\n    '@{activity('Source Host').output.firstRow.Source_Host}',\n    '@{activity('Fetch all databases name from source').output.firstRow.DBname}',\n    '@{variables('timeStamp')}',\n    '@{pipeline().RunId}',\n    '@{pipeline().parameters.Driver_Database}'\n);",
+                                    "type": "Expression"
+                                },
+                                "exportSettings": {
+                                    "type": "SnowflakeExportCopyCommand"
+                                }
+                            },
+                            "dataset": {
+                                "referenceName": "Snowflake_Operations",
+                                "type": "DatasetReference",
+                                "parameters": {
+                                    "AKV_Name": {
+                                        "value": "@pipeline().parameters.AKV_Name",
+                                        "type": "Expression"
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    {
+                        "name": "Timestamp",
+                        "type": "SetVariable",
+                        "dependsOn": [],
+                        "policy": {
+                            "secureOutput": false,
+                            "secureInput": false
+                        },
+                        "userProperties": [],
+                        "typeProperties": {
+                            "variableName": "timeStamp",
+                            "value": {
+                                "value": "@utcnow()",
+                                "type": "Expression"
+                            }
+                        }
+                    },
+                    {
+                        "name": "Source Host",
+                        "type": "Lookup",
+                        "dependsOn": [
+                            {
+                                "activity": "Timestamp",
+                                "dependencyConditions": [
+                                    "Succeeded"
+                                ]
+                            }
+                        ],
+                        "policy": {
+                            "timeout": "0.00:15:00",
+                            "retry": 2,
+                            "retryIntervalInSeconds": 300,
+                            "secureOutput": false,
+                            "secureInput": false
+                        },
+                        "userProperties": [],
+                        "typeProperties": {
+                            "source": {
+                                "type": "SnowflakeSource",
+                                "query": {
+                                    "value": "SELECT SOURCE_HOST from @{pipeline().parameters.Driver_Database}.COLLECTOR.CONFIG_SOURCE_HOST\nWHERE REGION_KEY='@{pipeline().parameters.Region_key}'",
+                                    "type": "Expression"
+                                },
+                                "exportSettings": {
+                                    "type": "SnowflakeExportCopyCommand"
+                                }
+                            },
+                            "dataset": {
+                                "referenceName": "Snowflake_Operations",
+                                "type": "DatasetReference",
+                                "parameters": {
+                                    "AKV_Name": {
+                                        "value": "@pipeline().parameters.AKV_Name",
+                                        "type": "Expression"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                ],
+                "policy": {
+                    "elapsedTimeMetric": {}
+                },
+                "parameters": {
+                    "AKV_Name": {
+                        "type": "string"
+                    },
+                    "Region_key": {
+                        "type": "string"
+                    },
+                    "Driver_Database": {
+                        "type": "string"
+                    }
+                },
+                "variables": {
+                    "timeStamp": {
+                        "type": "String"
+                    }
+                },
+                "folder": {
+                    "name": "Analytics_Platform_Collector"
+                },
+                "annotations": []
+            },
+            "dependsOn": []
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/Log_Source_Object_Rows_Count')]",
+            "type": "Microsoft.DataFactory/factories/pipelines",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "activities": [
+                    {
+                        "name": "Get Source Objects to Row Count",
+                        "type": "Lookup",
+                        "dependsOn": [],
+                        "policy": {
+                            "timeout": "0.00:15:00",
+                            "retry": 2,
+                            "retryIntervalInSeconds": 300,
+                            "secureOutput": false,
+                            "secureInput": false
+                        },
+                        "userProperties": [],
+                        "typeProperties": {
+                            "source": {
+                                "type": "SnowflakeSource",
+                                "query": {
+                                    "value": "SELECT\n    SOURCE_KEY,\n    SOURCE_HOST,\n    SOURCE_ENDPOINT,\n    SOURCE_ENDPOINT_TYPE,\n    SOURCE_SCHEMA,\n    SOURCE_TABLE,\n    TARGET_SCHEMA,\n    TARGET_TABLE,\n    REPLACE(TARGET_SCHEMA, 'LOAD_', 'RAW_') AS TARGET_RAW_SCHEMA,\n    TARGET_TABLE AS TARGET_RAW_TABLE\nFROM @{pipeline().parameters.Driver_Database}.COLLECTOR.CONFIG_SOURCE_DRIVER\nWHERE REGION_KEY = '@{pipeline().parameters.Region_Key}'\n    @{pipeline().parameters.Driver_Filter_Clause}\nORDER BY SOURCE_EXTRACT_SEQUENCE DESC;",
+                                    "type": "Expression"
+                                },
+                                "exportSettings": {
+                                    "type": "SnowflakeExportCopyCommand"
+                                }
+                            },
+                            "dataset": {
+                                "referenceName": "Snowflake_Operations",
+                                "type": "DatasetReference",
+                                "parameters": {
+                                    "AKV_Name": {
+                                        "value": "@pipeline().parameters.AKV_Name",
+                                        "type": "Expression"
+                                    }
+                                }
+                            },
+                            "firstRowOnly": false
+                        }
+                    },
+                    {
+                        "name": "For Each Object - Get and Log Row Count",
+                        "type": "ForEach",
+                        "dependsOn": [
+                            {
+                                "activity": "Get Source Objects to Row Count",
+                                "dependencyConditions": [
+                                    "Succeeded"
+                                ]
+                            }
+                        ],
+                        "userProperties": [],
+                        "typeProperties": {
+                            "items": {
+                                "value": "@activity('Get Source Objects to Row Count').output.value",
+                                "type": "Expression"
+                            },
+                            "isSequential": false,
+                            "batchCount": 20,
+                            "activities": [
+                                {
+                                    "name": "Get Source Object Row Count",
+                                    "type": "Lookup",
+                                    "dependsOn": [],
+                                    "policy": {
+                                        "timeout": "0.00:15:00",
+                                        "retry": 2,
+                                        "retryIntervalInSeconds": 300,
+                                        "secureOutput": false,
+                                        "secureInput": false
+                                    },
+                                    "userProperties": [],
+                                    "typeProperties": {
+                                        "source": {
+                                            "type": "AzureSqlSource",
+                                            "sqlReaderQuery": {
+                                                "value": "DECLARE @IsTable BIT = (\nSELECT TOP 1 CAST(1 AS BIT)\nFROM sys.tables\nWHERE\n    SCHEMA_NAME([schema_id]) = '@{item().SOURCE_SCHEMA}'\n    AND [name] = '@{item().SOURCE_TABLE}'\n);\n\nIF (\n    @IsTable = 1\n    --Use COUNT(1) for Synapse, could use sys.dm_pdw_nodes_db_column_store_row_group_physical_stats but saving on code for sake of a few seconds' runtime\n)\n    SELECT SUM(PS.row_count) AS SOURCE_ROW_COUNT\n    FROM sys.tables T\n    INNER JOIN sys.dm_db_partition_stats PS ON PS.[object_id] = T.[object_id]\n    WHERE\n        T.type_desc = 'USER_TABLE'\n        AND PS.index_id IN (0, 1) --heap or clustered index\n        AND SCHEMA_NAME(T.[schema_id]) = '@{item().SOURCE_SCHEMA}'\n        AND T.[name] = '@{item().SOURCE_TABLE}';\nELSE\n    SELECT COUNT(1) AS EXTRACT_ROW_COUNT\n    FROM [@{item().SOURCE_SCHEMA}].[@{item().SOURCE_TABLE}];",
+                                                "type": "Expression"
+                                            },
+                                            "queryTimeout": "02:00:00",
+                                            "partitionOption": "None"
+                                        },
+                                        "dataset": {
+                                            "referenceName": "Database_For_Extract",
+                                            "type": "DatasetReference",
+                                            "parameters": {
+                                                "Source_Endpoint": {
+                                                    "value": "@item().SOURCE_HOST",
+                                                    "type": "Expression"
+                                                },
+                                                "Source_Database": {
+                                                    "value": "@item().SOURCE_ENDPOINT",
+                                                    "type": "Expression"
+                                                },
+                                                "Source_Schema": {
+                                                    "value": "@item().SOURCE_SCHEMA",
+                                                    "type": "Expression"
+                                                },
+                                                "Source_Table": {
+                                                    "value": "@item().SOURCE_TABLE",
+                                                    "type": "Expression"
+                                                }
+                                            }
+                                        }
+                                    }
+                                },
+                                {
+                                    "name": "Log Source Object Row Count",
+                                    "description": "Calls stored procedure because ADF does not support direct INSERT INTO statements.",
+                                    "type": "Lookup",
+                                    "dependsOn": [
+                                        {
+                                            "activity": "Get Source Object Row Count",
+                                            "dependencyConditions": [
+                                                "Succeeded"
+                                            ]
+                                        }
+                                    ],
+                                    "policy": {
+                                        "timeout": "0.01:30:00",
+                                        "retry": 2,
+                                        "retryIntervalInSeconds": 300,
+                                        "secureOutput": false,
+                                        "secureInput": false
+                                    },
+                                    "userProperties": [],
+                                    "typeProperties": {
+                                        "source": {
+                                            "type": "SnowflakeSource",
+                                            "query": {
+                                                "value": "CALL @{pipeline().parameters.Driver_Database}.COLLECTOR.INSERT_LOG_SOURCE_LOAD_RECONCILIATION\n(\n    '@{utcnow()}'\n    , 'EXTRACT' --PHASE\n    , '@{item().SOURCE_KEY}'\n    , '@{item().SOURCE_HOST}'\n    , '@{item().SOURCE_ENDPOINT}'\n\n    , '@{item().SOURCE_SCHEMA}'\n    , '@{item().SOURCE_TABLE}'\n    , @{activity('Get Source Object Row Count').output.firstRow.SOURCE_ROW_COUNT}\n    , '@{item().TARGET_SCHEMA}'\n    , '@{item().TARGET_TABLE}'\n\n    , '@{item().TARGET_RAW_SCHEMA}'\n    , '@{item().TARGET_RAW_TABLE}'\n    , NULL --TARGET_LOAD_ROW_COUNT\n    , NULL --TARGET_LOAD_LATEST_RECORD_ROW_COUNT\n    , NULL --TARGET_RAW_ROW_COUNT\n    \n    , '@{pipeline().parameters.Driver_Database}'\n    , '@{pipeline().TriggerId}'\n    , '@{pipeline().RunId}'\n    , '@{pipeline()?.TriggeredByPipelineRunId}'\n);",
+                                                "type": "Expression"
+                                            },
+                                            "exportSettings": {
+                                                "type": "SnowflakeExportCopyCommand"
+                                            }
+                                        },
+                                        "dataset": {
+                                            "referenceName": "Snowflake_Operations",
+                                            "type": "DatasetReference",
+                                            "parameters": {
+                                                "AKV_Name": {
+                                                    "value": "@pipeline().parameters.AKV_Name",
+                                                    "type": "Expression"
+                                                }
+                                            }
+                                        },
+                                        "firstRowOnly": false
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ],
+                "policy": {
+                    "elapsedTimeMetric": {}
+                },
+                "parameters": {
+                    "AKV_Name": {
+                        "type": "string"
+                    },
+                    "Region_Key": {
+                        "type": "string"
+                    },
+                    "Driver_Filter_Clause": {
+                        "type": "string"
+                    },
+                    "Driver_Database": {
+                        "type": "string"
+                    }
+                },
+                "folder": {
+                    "name": "Analytics_Platform_Collector/Log"
+                },
+                "annotations": []
+            },
+            "dependsOn": []
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/Merge_Target_Load_to_Raw')]",
+            "type": "Microsoft.DataFactory/factories/pipelines",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "activities": [
+                    {
+                        "name": "Get Distinct Sequence Numbers for Load Tables to Merge",
+                        "type": "Lookup",
+                        "dependsOn": [],
+                        "policy": {
+                            "timeout": "0.00:15:00",
+                            "retry": 2,
+                            "retryIntervalInSeconds": 300,
+                            "secureOutput": false,
+                            "secureInput": false
+                        },
+                        "userProperties": [],
+                        "typeProperties": {
+                            "source": {
+                                "type": "SnowflakeSource",
+                                "query": {
+                                    "value": "SELECT DISTINCT SOURCE_EXTRACT_SEQUENCE\nFROM @{pipeline().parameters.Driver_Database}.COLLECTOR.CONFIG_SOURCE_DRIVER\nWHERE REGION_KEY = '@{pipeline().parameters.Region_Key}'\n    @{pipeline().parameters.Driver_Filter_Clause}\nORDER BY SOURCE_EXTRACT_SEQUENCE ASC;",
+                                    "type": "Expression"
+                                },
+                                "exportSettings": {
+                                    "type": "SnowflakeExportCopyCommand"
+                                }
+                            },
+                            "dataset": {
+                                "referenceName": "Snowflake_Operations",
+                                "type": "DatasetReference",
+                                "parameters": {
+                                    "AKV_Name": {
+                                        "value": "@pipeline().parameters.AKV_Name",
+                                        "type": "Expression"
+                                    }
+                                }
+                            },
+                            "firstRowOnly": false
+                        }
+                    },
+                    {
+                        "name": "For Each Sequence Number - Merge into Raw",
+                        "type": "ForEach",
+                        "dependsOn": [
+                            {
+                                "activity": "Get Distinct Sequence Numbers for Load Tables to Merge",
+                                "dependencyConditions": [
+                                    "Succeeded"
+                                ]
+                            }
+                        ],
+                        "userProperties": [],
+                        "typeProperties": {
+                            "items": {
+                                "value": "@activity('Get Distinct Sequence Numbers for Load Tables to Merge').output.value",
+                                "type": "Expression"
+                            },
+                            "isSequential": true,
+                            "activities": [
+                                {
+                                    "name": "Merge Load to Raw by Priority",
+                                    "type": "ExecutePipeline",
+                                    "dependsOn": [],
+                                    "userProperties": [],
+                                    "typeProperties": {
+                                        "pipeline": {
+                                            "referenceName": "Merge_Target_Load_to_Raw_by_Sequence",
+                                            "type": "PipelineReference"
+                                        },
+                                        "waitOnCompletion": true,
+                                        "parameters": {
+                                            "AKV_Name": {
+                                                "value": "@pipeline().parameters.AKV_Name",
+                                                "type": "Expression"
+                                            },
+                                            "Region_Key": {
+                                                "value": "@pipeline().parameters.Region_Key",
+                                                "type": "Expression"
+                                            },
+                                            "Driver_Filter_Clause": {
+                                                "value": "@pipeline().parameters.Driver_Filter_Clause",
+                                                "type": "Expression"
+                                            },
+                                            "Extract_Priority": {
+                                                "value": "@item().SOURCE_EXTRACT_SEQUENCE",
+                                                "type": "Expression"
+                                            },
+                                            "Incremental_Merge_Load_to_Raw": {
+                                                "value": "@pipeline().parameters.Incremental_Merge_Load_to_Raw",
+                                                "type": "Expression"
+                                            },
+                                            "Driver_Database": {
+                                                "value": "@pipeline().parameters.Driver_Database",
+                                                "type": "Expression"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    {
+                        "name": "Log to Final Table",
+                        "type": "Lookup",
+                        "state": "Inactive",
+                        "onInactiveMarkAs": "Skipped",
+                        "dependsOn": [
+                            {
+                                "activity": "For Each Sequence Number - Merge into Raw",
+                                "dependencyConditions": [
+                                    "Succeeded"
+                                ]
+                            }
+                        ],
+                        "policy": {
+                            "timeout": "0.00:15:00",
+                            "retry": 2,
+                            "retryIntervalInSeconds": 300,
+                            "secureOutput": false,
+                            "secureInput": false
+                        },
+                        "userProperties": [],
+                        "typeProperties": {
+                            "source": {
+                                "type": "SnowflakeSource",
+                                "query": {
+                                    "value": "CALL @{pipeline().parameters.Driver_Database}.COLLECTOR.MERGE_LOGS_FINAL \n(\n'@{pipeline().parameters.Driver_Database}'\n); ",
+                                    "type": "Expression"
+                                },
+                                "exportSettings": {
+                                    "type": "SnowflakeExportCopyCommand"
+                                }
+                            },
+                            "dataset": {
+                                "referenceName": "Snowflake_Operations",
+                                "type": "DatasetReference",
+                                "parameters": {
+                                    "AKV_Name": {
+                                        "value": "@pipeline().parameters.AKV_Name",
+                                        "type": "Expression"
+                                    }
+                                }
+                            },
+                            "firstRowOnly": false
+                        }
+                    }
+                ],
+                "policy": {
+                    "elapsedTimeMetric": {}
+                },
+                "parameters": {
+                    "AKV_Name": {
+                        "type": "string"
+                    },
+                    "Region_Key": {
+                        "type": "string"
+                    },
+                    "Driver_Filter_Clause": {
+                        "type": "string"
+                    },
+                    "Incremental_Merge_Load_to_Raw": {
+                        "type": "bool"
+                    },
+                    "Driver_Database": {
+                        "type": "string"
+                    }
+                },
+                "folder": {
+                    "name": "Analytics_Platform_Collector"
+                },
+                "annotations": []
+            },
+            "dependsOn": []
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/Extract_CM_Load_to_Snowflake')]",
+            "type": "Microsoft.DataFactory/factories/pipelines",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "activities": [
+                    {
+                        "name": "Get Config for All CM tables",
+                        "description": "",
+                        "type": "Lookup",
+                        "dependsOn": [],
+                        "policy": {
+                            "timeout": "0.00:15:00",
+                            "retry": 2,
+                            "retryIntervalInSeconds": 120,
+                            "secureOutput": false,
+                            "secureInput": false
+                        },
+                        "userProperties": [],
+                        "typeProperties": {
+                            "source": {
+                                "type": "SnowflakeSource",
+                                "query": {
+                                    "value": "SELECT\n    ID,\n\tSOURCE_KEY,\n    SOURCE_WATERMARK, \n    SOURCE_WATERMARK_DELAY,\n    SOURCE_HOST,\n    SOURCE_ENDPOINT,\n\tSOURCE_SCHEMA,\n    SOURCE_TABLE,\n\tTARGET_SCHEMA,\n\tTARGET_TABLE,\n\tREPLACE(TARGET_SCHEMA, 'LOAD_', 'RAW_') AS TARGET_RAW_SCHEMA,\n    TARGET_TABLE AS TARGET_RAW_TABLE\nFROM @{pipeline().parameters.Driver_Database}.COLLECTOR.CONFIG_SOURCE_DRIVER\nWHERE REGION_KEY = '@{pipeline().parameters.Region_key}'\nAND UPPER(SOURCE_ENDPOINT_TYPE) = 'REST API'\n    @{pipeline().parameters.Driver_Filter_Clause}\n    ORDER BY SOURCE_WATERMARK;",
+                                    "type": "Expression"
+                                },
+                                "exportSettings": {
+                                    "type": "SnowflakeExportCopyCommand"
+                                }
+                            },
+                            "dataset": {
+                                "referenceName": "Snowflake_Operations",
+                                "type": "DatasetReference",
+                                "parameters": {
+                                    "AKV_Name": {
+                                        "value": "@pipeline().parameters.AKV_Name",
+                                        "type": "Expression"
+                                    }
+                                }
+                            },
+                            "firstRowOnly": false
+                        }
+                    },
+                    {
+                        "name": "SET New Watermark",
+                        "type": "SetVariable",
+                        "dependsOn": [
+                            {
+                                "activity": "Get Config for All CM tables",
+                                "dependencyConditions": [
+                                    "Completed"
+                                ]
+                            },
+                            {
+                                "activity": "Get TIER Config",
+                                "dependencyConditions": [
+                                    "Completed"
+                                ]
+                            },
+                            {
+                                "activity": "Get REGION Config",
+                                "dependencyConditions": [
+                                    "Completed"
+                                ]
+                            },
+                            {
+                                "activity": "Get CLIENT Config",
+                                "dependencyConditions": [
+                                    "Completed"
+                                ]
+                            },
+                            {
+                                "activity": "Get ORGANIZATION Config",
+                                "dependencyConditions": [
+                                    "Completed"
+                                ]
+                            }
+                        ],
+                        "policy": {
+                            "secureOutput": false,
+                            "secureInput": false
+                        },
+                        "userProperties": [],
+                        "typeProperties": {
+                            "variableName": "NEW_SOURCE_WATERMARK",
+                            "value": {
+                                "value": "@subtractFromTime(utcNow(),coalesce(\nint(activity('Get Config for All CM tables').output.value[0].SOURCE_WATERMARK_DELAY),1), 'Minute')",
+                                "type": "Expression"
+                            }
+                        }
+                    },
+                    {
+                        "name": "Get API Credentials from AKV",
+                        "description": "Get REST API Service Account Credentials from AKV",
+                        "type": "WebActivity",
+                        "dependsOn": [
+                            {
+                                "activity": "SET New Watermark",
+                                "dependencyConditions": [
+                                    "Succeeded"
+                                ]
+                            }
+                        ],
+                        "policy": {
+                            "timeout": "0.00:15:00",
+                            "retry": 2,
+                            "retryIntervalInSeconds": 300,
+                            "secureOutput": false,
+                            "secureInput": false
+                        },
+                        "userProperties": [],
+                        "typeProperties": {
+                            "url": {
+                                "value": "https://@{pipeline().parameters.AKV_Name}.vault.azure.net/secrets/auth0-m2m-to-analytics-collector/?api-version=7.0",
+                                "type": "Expression"
+                            },
+                            "method": "GET",
+                            "headers": {},
+                            "authentication": {
+                                "type": "MSI",
+                                "resource": {
+                                    "value": "https://vault.azure.net",
+                                    "type": "Expression"
+                                }
+                            }
+                        }
+                    },
+                    {
+                        "name": "Get Auth0 Token",
+                        "description": "Validity of this token is 15 minutes only.",
+                        "type": "WebActivity",
+                        "dependsOn": [
+                            {
+                                "activity": "Get API Credentials from AKV",
+                                "dependencyConditions": [
+                                    "Succeeded"
+                                ]
+                            }
+                        ],
+                        "policy": {
+                            "timeout": "0.00:15:00",
+                            "retry": 2,
+                            "retryIntervalInSeconds": 300,
+                            "secureOutput": false,
+                            "secureInput": false
+                        },
+                        "userProperties": [],
+                        "typeProperties": {
+                            "url": {
+                                "value": "@pipeline().parameters.Auth0_Url",
+                                "type": "Expression"
+                            },
+                            "method": "POST",
+                            "headers": {
+                                "Content-Type": "application/json"
+                            },
+                            "body": {
+                                "value": "@activity('Get API Credentials from AKV').output.value",
+                                "type": "Expression"
+                            }
+                        }
+                    },
+                    {
+                        "name": "Extract CLIENTS to Doorstep",
+                        "type": "Copy",
+                        "dependsOn": [
+                            {
+                                "activity": "Get Auth0 Token",
+                                "dependencyConditions": [
+                                    "Succeeded"
+                                ]
+                            }
+                        ],
+                        "policy": {
+                            "timeout": "0.00:10:00",
+                            "retry": 2,
+                            "retryIntervalInSeconds": 120,
+                            "secureOutput": false,
+                            "secureInput": false
+                        },
+                        "userProperties": [],
+                        "typeProperties": {
+                            "source": {
+                                "type": "RestSource",
+                                "additionalColumns": [
+                                    {
+                                        "name": "SOURCE_KEY",
+                                        "value": {
+                                            "value": "@activity('Get CLIENT Config').output.value[0].SOURCE_KEY",
+                                            "type": "Expression"
+                                        }
+                                    },
+                                    {
+                                        "name": "SOURCE_PATH",
+                                        "value": {
+                                            "value": "@{concat(activity('Get CLIENT Config').output.value[0].SOURCE_HOST, activity('Get CLIENT Config').output.value[0].SOURCE_ENDPOINT)}",
+                                            "type": "Expression"
+                                        }
+                                    },
+                                    {
+                                        "name": "SOURCE_TIMESTAMP_UTC",
+                                        "value": {
+                                            "value": "@{utcnow()}",
+                                            "type": "Expression"
+                                        }
+                                    },
+                                    {
+                                        "name": "SOURCE_TIMESTAMP_MST",
+                                        "value": {
+                                            "value": "@{convertFromUtc(utcnow(), 'Mountain Standard Time')}",
+                                            "type": "Expression"
+                                        }
+                                    },
+                                    {
+                                        "name": "ADF_TRIGGER_ID",
+                                        "value": {
+                                            "value": "@pipeline().TriggerId",
+                                            "type": "Expression"
+                                        }
+                                    },
+                                    {
+                                        "name": "ADF_PIPELINE_ID",
+                                        "value": {
+                                            "value": "@pipeline().RunId",
+                                            "type": "Expression"
+                                        }
+                                    },
+                                    {
+                                        "name": "ADF_PIPELINE_PARENT_ID",
+                                        "value": {
+                                            "value": "@pipeline()?.TriggeredByPipelineRunId",
+                                            "type": "Expression"
+                                        }
+                                    }
+                                ],
+                                "httpRequestTimeout": "00:00:10",
+                                "requestInterval": "00.00:01:00.000",
+                                "requestMethod": "GET",
+                                "additionalHeaders": {
+                                    "Authorization": {
+                                        "value": "@concat('Bearer ',activity('Get Auth0 Token').output.access_token)",
+                                        "type": "Expression"
+                                    }
+                                },
+                                "paginationRules": {
+                                    "supportRFC5988": "true"
+                                }
+                            },
+                            "sink": {
+                                "type": "ParquetSink",
+                                "storeSettings": {
+                                    "type": "AzureBlobStorageWriteSettings"
+                                },
+                                "formatSettings": {
+                                    "type": "ParquetWriteSettings"
+                                }
+                            },
+                            "enableStaging": false,
+                            "validateDataConsistency": true,
+                            "translator": {
+                                "type": "TabularTranslator",
+                                "mappings": [
+                                    {
+                                        "source": {
+                                            "path": "$['id']"
+                                        },
+                                        "sink": {
+                                            "name": "ID",
+                                            "type": "String"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['name']"
+                                        },
+                                        "sink": {
+                                            "name": "NAME",
+                                            "type": "String"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['shortName']"
+                                        },
+                                        "sink": {
+                                            "name": "SHORTNAME",
+                                            "type": "String"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['status']"
+                                        },
+                                        "sink": {
+                                            "name": "STATUS",
+                                            "type": "String"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['isInternal']"
+                                        },
+                                        "sink": {
+                                            "name": "ISINTERNAL",
+                                            "type": "Boolean"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['isMachineOnly']"
+                                        },
+                                        "sink": {
+                                            "name": "ISMACHINEONLY",
+                                            "type": "Boolean"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['canCreateHostedUser']"
+                                        },
+                                        "sink": {
+                                            "name": "CANCREATEHOSTEDUSER",
+                                            "type": "Boolean"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['canCreatePreCommissionedSsoUser']"
+                                        },
+                                        "sink": {
+                                            "name": "CANCREATEPRECOMMISSIONEDSSOUSER",
+                                            "type": "Boolean"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['canInviteUserOutsideClient']"
+                                        },
+                                        "sink": {
+                                            "name": "CANINVITEUSEROUTSIDECLIENT",
+                                            "type": "Boolean"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['requireEulaAcceptance']"
+                                        },
+                                        "sink": {
+                                            "name": "REQUIREEULAACCEPTANCE",
+                                            "type": "Boolean"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['createdBy']"
+                                        },
+                                        "sink": {
+                                            "name": "CREATEDBY",
+                                            "type": "String"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['createdAt']"
+                                        },
+                                        "sink": {
+                                            "name": "CREATEDAT",
+                                            "type": "String"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['updatedBy']"
+                                        },
+                                        "sink": {
+                                            "name": "UPDATEDBY",
+                                            "type": "String"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['updatedAt']"
+                                        },
+                                        "sink": {
+                                            "name": "UPDATEDAT",
+                                            "type": "String"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['SOURCE_KEY']"
+                                        },
+                                        "sink": {
+                                            "name": "SOURCE_KEY",
+                                            "type": "String"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['SOURCE_PATH']"
+                                        },
+                                        "sink": {
+                                            "name": "SOURCE_PATH",
+                                            "type": "String"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['SOURCE_TIMESTAMP_UTC']"
+                                        },
+                                        "sink": {
+                                            "name": "SOURCE_TIMESTAMP_UTC",
+                                            "type": "String"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['SOURCE_TIMESTAMP_MST']"
+                                        },
+                                        "sink": {
+                                            "name": "SOURCE_TIMESTAMP_MST",
+                                            "type": "String"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['ADF_TRIGGER_ID']"
+                                        },
+                                        "sink": {
+                                            "name": "ADF_TRIGGER_ID",
+                                            "type": "String"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['ADF_PIPELINE_ID']"
+                                        },
+                                        "sink": {
+                                            "name": "ADF_PIPELINE_ID",
+                                            "type": "String"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['ADF_PIPELINE_PARENT_ID']"
+                                        },
+                                        "sink": {
+                                            "name": "ADF_PIPELINE_PARENT_ID",
+                                            "type": "String"
+                                        }
+                                    }
+                                ],
+                                "collectionReference": "",
+                                "mapComplexValuesToString": true
+                            }
+                        },
+                        "inputs": [
+                            {
+                                "referenceName": "DS_Collector_CM_Rest",
+                                "type": "DatasetReference",
+                                "parameters": {
+                                    "RelativeURL": {
+                                        "value": "@concat(string(activity('Get CLIENT Config').output.value[0].SOURCE_ENDPOINT), '?watermark=', string(activity('Get CLIENT Config').output.value[0].SOURCE_WATERMARK))\n\n",
+                                        "type": "Expression"
+                                    },
+                                    "BaseURL": {
+                                        "value": "@string(activity('Get CLIENT Config').output.value[0].SOURCE_HOST)",
+                                        "type": "Expression"
+                                    }
+                                }
+                            }
+                        ],
+                        "outputs": [
+                            {
+                                "referenceName": "Doorstep_Source_Files",
+                                "type": "DatasetReference",
+                                "parameters": {
+                                    "Source_File_Name": {
+                                        "value": "@toLower\n(concat(activity('Get CLIENT Config').output.value[0].SOURCE_KEY, \n    '_',\n    activity('Get CLIENT Config').output.value[0].SOURCE_SCHEMA, \n    '_',\n    activity('Get CLIENT Config').output.value[0].SOURCE_TABLE)\n)",
+                                        "type": "Expression"
+                                    },
+                                    "AKV_Name": {
+                                        "value": "@pipeline().parameters.AKV_Name",
+                                        "type": "Expression"
+                                    }
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "name": "Load CLIENTS to Snowflake",
+                        "type": "Copy",
+                        "dependsOn": [
+                            {
+                                "activity": "Extract CLIENTS to Doorstep",
+                                "dependencyConditions": [
+                                    "Succeeded"
+                                ]
+                            }
+                        ],
+                        "policy": {
+                            "timeout": "0.01:30:00",
+                            "retry": 2,
+                            "retryIntervalInSeconds": 300,
+                            "secureOutput": false,
+                            "secureInput": false
+                        },
+                        "userProperties": [],
+                        "typeProperties": {
+                            "source": {
+                                "type": "ParquetSource",
+                                "storeSettings": {
+                                    "type": "AzureBlobStorageReadSettings",
+                                    "recursive": true
+                                },
+                                "formatSettings": {
+                                    "type": "ParquetReadSettings"
+                                }
+                            },
+                            "sink": {
+                                "type": "SnowflakeSink",
+                                "importSettings": {
+                                    "type": "SnowflakeImportCopyCommand",
+                                    "additionalCopyOptions": {
+                                        "PURGE": "TRUE"
+                                    }
+                                }
+                            },
+                            "enableStaging": false
+                        },
+                        "inputs": [
+                            {
+                                "referenceName": "Doorstep_Source_Files",
+                                "type": "DatasetReference",
+                                "parameters": {
+                                    "Source_File_Name": {
+                                        "value": "@toLower\n(concat(activity('Get CLIENT Config').output.value[0].SOURCE_KEY,\n    '_',\n    activity('Get CLIENT Config').output.value[0].SOURCE_SCHEMA, \n    '_',\n    activity('Get CLIENT Config').output.value[0].SOURCE_TABLE)\n)",
+                                        "type": "Expression"
+                                    },
+                                    "AKV_Name": {
+                                        "value": "@pipeline().parameters.AKV_Name",
+                                        "type": "Expression"
+                                    }
+                                }
+                            }
+                        ],
+                        "outputs": [
+                            {
+                                "referenceName": "Snowflake_Target",
+                                "type": "DatasetReference",
+                                "parameters": {
+                                    "TARGET_SCHEMA": {
+                                        "value": "@activity('Get CLIENT Config').output.value[0].TARGET_SCHEMA",
+                                        "type": "Expression"
+                                    },
+                                    "TARGET_TABLE": {
+                                        "value": "@activity('Get CLIENT Config').output.value[0].TARGET_TABLE",
+                                        "type": "Expression"
+                                    },
+                                    "AKV_Name": {
+                                        "value": "@pipeline().parameters.AKV_Name",
+                                        "type": "Expression"
+                                    }
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "name": "Update Source Watermark",
+                        "type": "ForEach",
+                        "dependsOn": [
+                            {
+                                "activity": "Load CLIENTS to Snowflake",
+                                "dependencyConditions": [
+                                    "Completed"
+                                ]
+                            },
+                            {
+                                "activity": "Load REGIONS to Snowflake",
+                                "dependencyConditions": [
+                                    "Completed"
+                                ]
+                            },
+                            {
+                                "activity": "Load ORGANIZATIONS to Snowflake",
+                                "dependencyConditions": [
+                                    "Completed"
+                                ]
+                            },
+                            {
+                                "activity": "Load TIERS to Snowflake",
+                                "dependencyConditions": [
+                                    "Completed"
+                                ]
+                            }
+                        ],
+                        "userProperties": [],
+                        "typeProperties": {
+                            "items": {
+                                "value": "@activity('Get Config for All CM tables').output.value",
+                                "type": "Expression"
+                            },
+                            "batchCount": 50,
+                            "activities": [
+                                {
+                                    "name": "Set Watermark only if Rows exist at Source",
+                                    "type": "IfCondition",
+                                    "dependsOn": [],
+                                    "userProperties": [],
+                                    "typeProperties": {
+                                        "expression": {
+                                            "value": "@or\n(\nAND(greater(activity('Extract CLIENTS to Doorstep').output.rowsRead, 0), equals(item().SOURCE_TABLE, 'CLIENT')),\nAND(greater(activity('Extract REGIONS to Doorstep').output.rowsRead, 0), equals(item().SOURCE_TABLE, 'REGION')),\nAND(greater(activity('Extract ORGANIZATIONS to Doorstep').output.rowsRead, 0), equals(item().SOURCE_TABLE, 'ORGANIZATION')),\nAND(greater(activity('Extract TIERS to Doorstep').output.rowsRead, 0), equals(item().SOURCE_TABLE, 'TIER'))\n)",
+                                            "type": "Expression"
+                                        },
+                                        "ifTrueActivities": [
+                                            {
+                                                "name": "Update Latest Watermark In Config Table",
+                                                "type": "Lookup",
+                                                "dependsOn": [],
+                                                "policy": {
+                                                    "timeout": "0.00:15:00",
+                                                    "retry": 2,
+                                                    "retryIntervalInSeconds": 300,
+                                                    "secureOutput": false,
+                                                    "secureInput": false
+                                                },
+                                                "userProperties": [],
+                                                "typeProperties": {
+                                                    "source": {
+                                                        "type": "SnowflakeSource",
+                                                        "query": {
+                                                            "value": "CALL @{pipeline().parameters.Driver_Database}.COLLECTOR.UPSERT_SOURCE_WATERMARK_CONFIG_SOURCE_DRIVER \n(\n'@{pipeline().parameters.Driver_Database}',\n'@{variables('NEW_SOURCE_WATERMARK')}',\n '@{item().SOURCE_ENDPOINT}',\n '@{item().SOURCE_HOST}',\n '@{item().ID}'\n);",
+                                                            "type": "Expression"
+                                                        },
+                                                        "exportSettings": {
+                                                            "type": "SnowflakeExportCopyCommand"
+                                                        }
+                                                    },
+                                                    "dataset": {
+                                                        "referenceName": "Snowflake_Operations",
+                                                        "type": "DatasetReference",
+                                                        "parameters": {
+                                                            "AKV_Name": "@pipeline().parameters.AKV_Name"
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        ]
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    {
+                        "name": "Extract REGIONS to Doorstep",
+                        "type": "Copy",
+                        "dependsOn": [
+                            {
+                                "activity": "Get Auth0 Token",
+                                "dependencyConditions": [
+                                    "Succeeded"
+                                ]
+                            }
+                        ],
+                        "policy": {
+                            "timeout": "0.00:10:00",
+                            "retry": 2,
+                            "retryIntervalInSeconds": 120,
+                            "secureOutput": false,
+                            "secureInput": false
+                        },
+                        "userProperties": [],
+                        "typeProperties": {
+                            "source": {
+                                "type": "RestSource",
+                                "additionalColumns": [
+                                    {
+                                        "name": "SOURCE_KEY",
+                                        "value": {
+                                            "value": "@activity('Get REGION Config').output.value[0].SOURCE_KEY",
+                                            "type": "Expression"
+                                        }
+                                    },
+                                    {
+                                        "name": "SOURCE_PATH",
+                                        "value": {
+                                            "value": "@{concat(activity('Get REGION Config').output.value[0].SOURCE_HOST, activity('Get REGION Config').output.value[0].SOURCE_ENDPOINT)}",
+                                            "type": "Expression"
+                                        }
+                                    },
+                                    {
+                                        "name": "SOURCE_TIMESTAMP_UTC",
+                                        "value": {
+                                            "value": "@{utcnow()}",
+                                            "type": "Expression"
+                                        }
+                                    },
+                                    {
+                                        "name": "SOURCE_TIMESTAMP_MST",
+                                        "value": {
+                                            "value": "@{convertFromUtc(utcnow(), 'Mountain Standard Time')}",
+                                            "type": "Expression"
+                                        }
+                                    },
+                                    {
+                                        "name": "ADF_TRIGGER_ID",
+                                        "value": {
+                                            "value": "@pipeline().TriggerId",
+                                            "type": "Expression"
+                                        }
+                                    },
+                                    {
+                                        "name": "ADF_PIPELINE_ID",
+                                        "value": {
+                                            "value": "@pipeline().RunId",
+                                            "type": "Expression"
+                                        }
+                                    },
+                                    {
+                                        "name": "ADF_PIPELINE_PARENT_ID",
+                                        "value": {
+                                            "value": "@pipeline()?.TriggeredByPipelineRunId",
+                                            "type": "Expression"
+                                        }
+                                    }
+                                ],
+                                "httpRequestTimeout": "00:00:10",
+                                "requestInterval": "00.00:01:00.000",
+                                "requestMethod": "GET",
+                                "additionalHeaders": {
+                                    "Authorization": {
+                                        "value": "@concat('Bearer ',activity('Get Auth0 Token').output.access_token)",
+                                        "type": "Expression"
+                                    }
+                                },
+                                "paginationRules": {
+                                    "supportRFC5988": "true"
+                                }
+                            },
+                            "sink": {
+                                "type": "ParquetSink",
+                                "storeSettings": {
+                                    "type": "AzureBlobStorageWriteSettings"
+                                },
+                                "formatSettings": {
+                                    "type": "ParquetWriteSettings"
+                                }
+                            },
+                            "enableStaging": false,
+                            "validateDataConsistency": true,
+                            "translator": {
+                                "type": "TabularTranslator",
+                                "mappings": [
+                                    {
+                                        "source": {
+                                            "path": "$['id']"
+                                        },
+                                        "sink": {
+                                            "name": "ID",
+                                            "type": "String"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['name']"
+                                        },
+                                        "sink": {
+                                            "name": "NAME",
+                                            "type": "String"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['cloudIdentifier']"
+                                        },
+                                        "sink": {
+                                            "name": "CLOUDIDENTIFIER",
+                                            "type": "String"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['createdBy']"
+                                        },
+                                        "sink": {
+                                            "name": "CREATEDBY",
+                                            "type": "String"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['createdAt']"
+                                        },
+                                        "sink": {
+                                            "name": "CREATEDAT",
+                                            "type": "String"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['updatedBy']"
+                                        },
+                                        "sink": {
+                                            "name": "UPDATEDBY",
+                                            "type": "String"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['updatedAt']"
+                                        },
+                                        "sink": {
+                                            "name": "UPDATEDAT",
+                                            "type": "String"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['SOURCE_KEY']"
+                                        },
+                                        "sink": {
+                                            "name": "SOURCE_KEY",
+                                            "type": "String"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['SOURCE_PATH']"
+                                        },
+                                        "sink": {
+                                            "name": "SOURCE_PATH",
+                                            "type": "String"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['SOURCE_TIMESTAMP_UTC']"
+                                        },
+                                        "sink": {
+                                            "name": "SOURCE_TIMESTAMP_UTC",
+                                            "type": "String"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['SOURCE_TIMESTAMP_MST']"
+                                        },
+                                        "sink": {
+                                            "name": "SOURCE_TIMESTAMP_MST",
+                                            "type": "String"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['ADF_TRIGGER_ID']"
+                                        },
+                                        "sink": {
+                                            "name": "ADF_TRIGGER_ID",
+                                            "type": "String"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['ADF_PIPELINE_ID']"
+                                        },
+                                        "sink": {
+                                            "name": "ADF_PIPELINE_ID",
+                                            "type": "String"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['ADF_PIPELINE_PARENT_ID']"
+                                        },
+                                        "sink": {
+                                            "name": "ADF_PIPELINE_PARENT_ID",
+                                            "type": "String"
+                                        }
+                                    }
+                                ],
+                                "collectionReference": "",
+                                "mapComplexValuesToString": true
+                            }
+                        },
+                        "inputs": [
+                            {
+                                "referenceName": "DS_Collector_CM_Rest",
+                                "type": "DatasetReference",
+                                "parameters": {
+                                    "RelativeURL": {
+                                        "value": "@concat(string(activity('Get REGION Config').output.value[0].SOURCE_ENDPOINT), '?watermark=', string(activity('Get REGION Config').output.value[0].SOURCE_WATERMARK))\n\n",
+                                        "type": "Expression"
+                                    },
+                                    "BaseURL": {
+                                        "value": "@string(activity('Get REGION Config').output.value[0].SOURCE_HOST)",
+                                        "type": "Expression"
+                                    }
+                                }
+                            }
+                        ],
+                        "outputs": [
+                            {
+                                "referenceName": "Doorstep_Source_Files",
+                                "type": "DatasetReference",
+                                "parameters": {
+                                    "Source_File_Name": {
+                                        "value": "@toLower\n(concat(activity('Get REGION Config').output.value[0].SOURCE_KEY,'_',\n    activity('Get REGION Config').output.value[0].SOURCE_SCHEMA,\n    '_',\n    activity('Get REGION Config').output.value[0].SOURCE_TABLE)\n)",
+                                        "type": "Expression"
+                                    },
+                                    "AKV_Name": {
+                                        "value": "@pipeline().parameters.AKV_Name",
+                                        "type": "Expression"
+                                    }
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "name": "Load REGIONS to Snowflake",
+                        "type": "Copy",
+                        "dependsOn": [
+                            {
+                                "activity": "Extract REGIONS to Doorstep",
+                                "dependencyConditions": [
+                                    "Succeeded"
+                                ]
+                            }
+                        ],
+                        "policy": {
+                            "timeout": "0.01:30:00",
+                            "retry": 2,
+                            "retryIntervalInSeconds": 300,
+                            "secureOutput": false,
+                            "secureInput": false
+                        },
+                        "userProperties": [],
+                        "typeProperties": {
+                            "source": {
+                                "type": "ParquetSource",
+                                "storeSettings": {
+                                    "type": "AzureBlobStorageReadSettings",
+                                    "recursive": true
+                                },
+                                "formatSettings": {
+                                    "type": "ParquetReadSettings"
+                                }
+                            },
+                            "sink": {
+                                "type": "SnowflakeSink",
+                                "importSettings": {
+                                    "type": "SnowflakeImportCopyCommand",
+                                    "additionalCopyOptions": {
+                                        "PURGE": "TRUE"
+                                    }
+                                }
+                            },
+                            "enableStaging": false
+                        },
+                        "inputs": [
+                            {
+                                "referenceName": "Doorstep_Source_Files",
+                                "type": "DatasetReference",
+                                "parameters": {
+                                    "Source_File_Name": {
+                                        "value": "@toLower\n(concat(activity('Get REGION Config').output.value[0].SOURCE_KEY,'_',\n    activity('Get REGION Config').output.value[0].SOURCE_SCHEMA,\n    '_',\n    activity('Get REGION Config').output.value[0].SOURCE_TABLE)\n)",
+                                        "type": "Expression"
+                                    },
+                                    "AKV_Name": {
+                                        "value": "@pipeline().parameters.AKV_Name",
+                                        "type": "Expression"
+                                    }
+                                }
+                            }
+                        ],
+                        "outputs": [
+                            {
+                                "referenceName": "Snowflake_Target",
+                                "type": "DatasetReference",
+                                "parameters": {
+                                    "TARGET_SCHEMA": {
+                                        "value": "@activity('Get REGION Config').output.value[0].TARGET_SCHEMA",
+                                        "type": "Expression"
+                                    },
+                                    "TARGET_TABLE": {
+                                        "value": "@activity('Get REGION Config').output.value[0].TARGET_TABLE",
+                                        "type": "Expression"
+                                    },
+                                    "AKV_Name": {
+                                        "value": "@pipeline().parameters.AKV_Name",
+                                        "type": "Expression"
+                                    }
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "name": "Extract ORGANIZATIONS to Doorstep",
+                        "type": "Copy",
+                        "dependsOn": [
+                            {
+                                "activity": "Get Auth0 Token",
+                                "dependencyConditions": [
+                                    "Succeeded"
+                                ]
+                            }
+                        ],
+                        "policy": {
+                            "timeout": "0.00:10:00",
+                            "retry": 2,
+                            "retryIntervalInSeconds": 120,
+                            "secureOutput": false,
+                            "secureInput": false
+                        },
+                        "userProperties": [],
+                        "typeProperties": {
+                            "source": {
+                                "type": "RestSource",
+                                "additionalColumns": [
+                                    {
+                                        "name": "SOURCE_KEY",
+                                        "value": {
+                                            "value": "@activity('Get ORGANIZATION Config').output.value[0].SOURCE_KEY",
+                                            "type": "Expression"
+                                        }
+                                    },
+                                    {
+                                        "name": "SOURCE_PATH",
+                                        "value": {
+                                            "value": "@{concat(activity('Get ORGANIZATION Config').output.value[0].SOURCE_HOST, activity('Get ORGANIZATION Config').output.value[0].SOURCE_ENDPOINT)}",
+                                            "type": "Expression"
+                                        }
+                                    },
+                                    {
+                                        "name": "SOURCE_TIMESTAMP_UTC",
+                                        "value": {
+                                            "value": "@{utcnow()}",
+                                            "type": "Expression"
+                                        }
+                                    },
+                                    {
+                                        "name": "SOURCE_TIMESTAMP_MST",
+                                        "value": {
+                                            "value": "@{convertFromUtc(utcnow(), 'Mountain Standard Time')}",
+                                            "type": "Expression"
+                                        }
+                                    },
+                                    {
+                                        "name": "ADF_TRIGGER_ID",
+                                        "value": {
+                                            "value": "@pipeline().TriggerId",
+                                            "type": "Expression"
+                                        }
+                                    },
+                                    {
+                                        "name": "ADF_PIPELINE_ID",
+                                        "value": {
+                                            "value": "@pipeline().RunId",
+                                            "type": "Expression"
+                                        }
+                                    },
+                                    {
+                                        "name": "ADF_PIPELINE_PARENT_ID",
+                                        "value": {
+                                            "value": "@pipeline()?.TriggeredByPipelineRunId",
+                                            "type": "Expression"
+                                        }
+                                    }
+                                ],
+                                "httpRequestTimeout": "00:00:10",
+                                "requestInterval": "00.00:01:00.000",
+                                "requestMethod": "GET",
+                                "additionalHeaders": {
+                                    "Authorization": {
+                                        "value": "@concat('Bearer ',activity('Get Auth0 Token').output.access_token)",
+                                        "type": "Expression"
+                                    }
+                                },
+                                "paginationRules": {
+                                    "supportRFC5988": "true"
+                                }
+                            },
+                            "sink": {
+                                "type": "ParquetSink",
+                                "storeSettings": {
+                                    "type": "AzureBlobStorageWriteSettings"
+                                },
+                                "formatSettings": {
+                                    "type": "ParquetWriteSettings"
+                                }
+                            },
+                            "enableStaging": false,
+                            "validateDataConsistency": true,
+                            "translator": {
+                                "type": "TabularTranslator",
+                                "mappings": [
+                                    {
+                                        "source": {
+                                            "path": "$['id']"
+                                        },
+                                        "sink": {
+                                            "name": "ID",
+                                            "type": "String"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['name']"
+                                        },
+                                        "sink": {
+                                            "name": "NAME",
+                                            "type": "String"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['shortName']"
+                                        },
+                                        "sink": {
+                                            "name": "SHORTNAME",
+                                            "type": "String"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['description']"
+                                        },
+                                        "sink": {
+                                            "name": "DESCRIPTION",
+                                            "type": "String"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['clientId']"
+                                        },
+                                        "sink": {
+                                            "name": "CLIENTID",
+                                            "type": "String"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['regionId']"
+                                        },
+                                        "sink": {
+                                            "name": "REGIONID",
+                                            "type": "String"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['tierId']"
+                                        },
+                                        "sink": {
+                                            "name": "TIERID",
+                                            "type": "String"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['status']"
+                                        },
+                                        "sink": {
+                                            "name": "STATUS",
+                                            "type": "String"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['createdBy']"
+                                        },
+                                        "sink": {
+                                            "name": "CREATEDBY",
+                                            "type": "String"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['createdAt']"
+                                        },
+                                        "sink": {
+                                            "name": "CREATEDAT",
+                                            "type": "String"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['updatedBy']"
+                                        },
+                                        "sink": {
+                                            "name": "UPDATEDBY",
+                                            "type": "String"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['updatedAt']"
+                                        },
+                                        "sink": {
+                                            "name": "UPDATEDAT",
+                                            "type": "String"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['SOURCE_KEY']"
+                                        },
+                                        "sink": {
+                                            "name": "SOURCE_KEY",
+                                            "type": "String"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['SOURCE_PATH']"
+                                        },
+                                        "sink": {
+                                            "name": "SOURCE_PATH",
+                                            "type": "String"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['SOURCE_TIMESTAMP_UTC']"
+                                        },
+                                        "sink": {
+                                            "name": "SOURCE_TIMESTAMP_UTC",
+                                            "type": "String"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['SOURCE_TIMESTAMP_MST']"
+                                        },
+                                        "sink": {
+                                            "name": "SOURCE_TIMESTAMP_MST",
+                                            "type": "String"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['ADF_TRIGGER_ID']"
+                                        },
+                                        "sink": {
+                                            "name": "ADF_TRIGGER_ID",
+                                            "type": "String"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['ADF_PIPELINE_ID']"
+                                        },
+                                        "sink": {
+                                            "name": "ADF_PIPELINE_ID",
+                                            "type": "String"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['ADF_PIPELINE_PARENT_ID']"
+                                        },
+                                        "sink": {
+                                            "name": "ADF_PIPELINE_PARENT_ID",
+                                            "type": "String"
+                                        }
+                                    }
+                                ],
+                                "collectionReference": "",
+                                "mapComplexValuesToString": true
+                            }
+                        },
+                        "inputs": [
+                            {
+                                "referenceName": "DS_Collector_CM_Rest",
+                                "type": "DatasetReference",
+                                "parameters": {
+                                    "RelativeURL": {
+                                        "value": "@concat(string(activity('Get ORGANIZATION Config').output.value[0].SOURCE_ENDPOINT), '?watermark=', string(activity('Get ORGANIZATION Config').output.value[0].SOURCE_WATERMARK))\n\n",
+                                        "type": "Expression"
+                                    },
+                                    "BaseURL": {
+                                        "value": "@string(activity('Get ORGANIZATION Config').output.value[0].SOURCE_HOST)",
+                                        "type": "Expression"
+                                    }
+                                }
+                            }
+                        ],
+                        "outputs": [
+                            {
+                                "referenceName": "Doorstep_Source_Files",
+                                "type": "DatasetReference",
+                                "parameters": {
+                                    "Source_File_Name": {
+                                        "value": "@toLower\n(concat(activity('Get ORGANIZATION Config').output.value[0].SOURCE_KEY,\n    '_',\n    activity('Get ORGANIZATION Config').output.value[0].SOURCE_SCHEMA,\n    '_',\n    activity('Get ORGANIZATION Config').output.value[0].SOURCE_TABLE)\n)",
+                                        "type": "Expression"
+                                    },
+                                    "AKV_Name": {
+                                        "value": "@pipeline().parameters.AKV_Name",
+                                        "type": "Expression"
+                                    }
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "name": "Extract TIERS to Doorstep",
+                        "type": "Copy",
+                        "dependsOn": [
+                            {
+                                "activity": "Get Auth0 Token",
+                                "dependencyConditions": [
+                                    "Succeeded"
+                                ]
+                            }
+                        ],
+                        "policy": {
+                            "timeout": "0.00:10:00",
+                            "retry": 2,
+                            "retryIntervalInSeconds": 120,
+                            "secureOutput": false,
+                            "secureInput": false
+                        },
+                        "userProperties": [],
+                        "typeProperties": {
+                            "source": {
+                                "type": "RestSource",
+                                "additionalColumns": [
+                                    {
+                                        "name": "SOURCE_KEY",
+                                        "value": {
+                                            "value": "@activity('Get TIER Config').output.value[0].SOURCE_KEY",
+                                            "type": "Expression"
+                                        }
+                                    },
+                                    {
+                                        "name": "SOURCE_PATH",
+                                        "value": {
+                                            "value": "@{concat(activity('Get TIER Config').output.value[0].SOURCE_HOST, activity('Get TIER Config').output.value[0].SOURCE_ENDPOINT)}",
+                                            "type": "Expression"
+                                        }
+                                    },
+                                    {
+                                        "name": "SOURCE_TIMESTAMP_UTC",
+                                        "value": {
+                                            "value": "@{utcnow()}",
+                                            "type": "Expression"
+                                        }
+                                    },
+                                    {
+                                        "name": "SOURCE_TIMESTAMP_MST",
+                                        "value": {
+                                            "value": "@{convertFromUtc(utcnow(), 'Mountain Standard Time')}",
+                                            "type": "Expression"
+                                        }
+                                    },
+                                    {
+                                        "name": "ADF_TRIGGER_ID",
+                                        "value": {
+                                            "value": "@pipeline().TriggerId",
+                                            "type": "Expression"
+                                        }
+                                    },
+                                    {
+                                        "name": "ADF_PIPELINE_ID",
+                                        "value": {
+                                            "value": "@pipeline().RunId",
+                                            "type": "Expression"
+                                        }
+                                    },
+                                    {
+                                        "name": "ADF_PIPELINE_PARENT_ID",
+                                        "value": {
+                                            "value": "@pipeline()?.TriggeredByPipelineRunId",
+                                            "type": "Expression"
+                                        }
+                                    }
+                                ],
+                                "httpRequestTimeout": "00:00:10",
+                                "requestInterval": "00.00:01:00.000",
+                                "requestMethod": "GET",
+                                "additionalHeaders": {
+                                    "Authorization": {
+                                        "value": "@concat('Bearer ',activity('Get Auth0 Token').output.access_token)",
+                                        "type": "Expression"
+                                    }
+                                },
+                                "paginationRules": {
+                                    "supportRFC5988": "true"
+                                }
+                            },
+                            "sink": {
+                                "type": "ParquetSink",
+                                "storeSettings": {
+                                    "type": "AzureBlobStorageWriteSettings"
+                                },
+                                "formatSettings": {
+                                    "type": "ParquetWriteSettings"
+                                }
+                            },
+                            "enableStaging": false,
+                            "validateDataConsistency": true,
+                            "translator": {
+                                "type": "TabularTranslator",
+                                "mappings": [
+                                    {
+                                        "source": {
+                                            "path": "$['id']"
+                                        },
+                                        "sink": {
+                                            "name": "ID",
+                                            "type": "String"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['name']"
+                                        },
+                                        "sink": {
+                                            "name": "NAME",
+                                            "type": "String"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['description']"
+                                        },
+                                        "sink": {
+                                            "name": "DESCRIPTION",
+                                            "type": "String"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['minSize']"
+                                        },
+                                        "sink": {
+                                            "name": "MINSIZE",
+                                            "type": "String"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['maxSize']"
+                                        },
+                                        "sink": {
+                                            "name": "MAXSIZE",
+                                            "type": "String"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['azureSqlCores']"
+                                        },
+                                        "sink": {
+                                            "name": "AZURESQLCORES",
+                                            "type": "String"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['createdBy']"
+                                        },
+                                        "sink": {
+                                            "name": "CREATEDBY",
+                                            "type": "String"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['createdAt']"
+                                        },
+                                        "sink": {
+                                            "name": "CREATEDAT",
+                                            "type": "String"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['updatedBy']"
+                                        },
+                                        "sink": {
+                                            "name": "UPDATEDBY",
+                                            "type": "String"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['updatedAt']"
+                                        },
+                                        "sink": {
+                                            "name": "UPDATEDAT",
+                                            "type": "String"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['SOURCE_KEY']"
+                                        },
+                                        "sink": {
+                                            "name": "SOURCE_KEY",
+                                            "type": "String"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['SOURCE_PATH']"
+                                        },
+                                        "sink": {
+                                            "name": "SOURCE_PATH",
+                                            "type": "String"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['SOURCE_TIMESTAMP_UTC']"
+                                        },
+                                        "sink": {
+                                            "name": "SOURCE_TIMESTAMP_UTC",
+                                            "type": "String"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['SOURCE_TIMESTAMP_MST']"
+                                        },
+                                        "sink": {
+                                            "name": "SOURCE_TIMESTAMP_MST",
+                                            "type": "String"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['ADF_TRIGGER_ID']"
+                                        },
+                                        "sink": {
+                                            "name": "ADF_TRIGGER_ID",
+                                            "type": "String"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['ADF_PIPELINE_ID']"
+                                        },
+                                        "sink": {
+                                            "name": "ADF_PIPELINE_ID",
+                                            "type": "String"
+                                        }
+                                    },
+                                    {
+                                        "source": {
+                                            "path": "$['ADF_PIPELINE_PARENT_ID']"
+                                        },
+                                        "sink": {
+                                            "name": "ADF_PIPELINE_PARENT_ID",
+                                            "type": "String"
+                                        }
+                                    }
+                                ],
+                                "collectionReference": "",
+                                "mapComplexValuesToString": true
+                            }
+                        },
+                        "inputs": [
+                            {
+                                "referenceName": "DS_Collector_CM_Rest",
+                                "type": "DatasetReference",
+                                "parameters": {
+                                    "RelativeURL": {
+                                        "value": "@concat(string(activity('Get TIER Config').output.value[0].SOURCE_ENDPOINT), '?watermark=', string(activity('Get TIER Config').output.value[0].SOURCE_WATERMARK))\n\n",
+                                        "type": "Expression"
+                                    },
+                                    "BaseURL": {
+                                        "value": "@string(activity('Get TIER Config').output.value[0].SOURCE_HOST)",
+                                        "type": "Expression"
+                                    }
+                                }
+                            }
+                        ],
+                        "outputs": [
+                            {
+                                "referenceName": "Doorstep_Source_Files",
+                                "type": "DatasetReference",
+                                "parameters": {
+                                    "Source_File_Name": {
+                                        "value": "@toLower\n(concat(activity('Get TIER Config').output.value[0].SOURCE_KEY, '_',\n    activity('Get TIER Config').output.value[0].SOURCE_SCHEMA,\n    '_',\n    activity('Get TIER Config').output.value[0].SOURCE_TABLE)\n)",
+                                        "type": "Expression"
+                                    },
+                                    "AKV_Name": {
+                                        "value": "@pipeline().parameters.AKV_Name",
+                                        "type": "Expression"
+                                    }
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "name": "Load ORGANIZATIONS to Snowflake",
+                        "type": "Copy",
+                        "dependsOn": [
+                            {
+                                "activity": "Extract ORGANIZATIONS to Doorstep",
+                                "dependencyConditions": [
+                                    "Succeeded"
+                                ]
+                            }
+                        ],
+                        "policy": {
+                            "timeout": "0.01:30:00",
+                            "retry": 2,
+                            "retryIntervalInSeconds": 300,
+                            "secureOutput": false,
+                            "secureInput": false
+                        },
+                        "userProperties": [],
+                        "typeProperties": {
+                            "source": {
+                                "type": "ParquetSource",
+                                "storeSettings": {
+                                    "type": "AzureBlobStorageReadSettings",
+                                    "recursive": true
+                                },
+                                "formatSettings": {
+                                    "type": "ParquetReadSettings"
+                                }
+                            },
+                            "sink": {
+                                "type": "SnowflakeSink",
+                                "importSettings": {
+                                    "type": "SnowflakeImportCopyCommand",
+                                    "additionalCopyOptions": {
+                                        "PURGE": "TRUE"
+                                    }
+                                }
+                            },
+                            "enableStaging": false
+                        },
+                        "inputs": [
+                            {
+                                "referenceName": "Doorstep_Source_Files",
+                                "type": "DatasetReference",
+                                "parameters": {
+                                    "Source_File_Name": {
+                                        "value": "@toLower\n(concat(activity('Get ORGANIZATION Config').output.value[0].SOURCE_KEY,\n    '_',\n    activity('Get ORGANIZATION Config').output.value[0].SOURCE_SCHEMA,\n    '_',\n    activity('Get ORGANIZATION Config').output.value[0].SOURCE_TABLE)\n)",
+                                        "type": "Expression"
+                                    },
+                                    "AKV_Name": {
+                                        "value": "@pipeline().parameters.AKV_Name",
+                                        "type": "Expression"
+                                    }
+                                }
+                            }
+                        ],
+                        "outputs": [
+                            {
+                                "referenceName": "Snowflake_Target",
+                                "type": "DatasetReference",
+                                "parameters": {
+                                    "TARGET_SCHEMA": {
+                                        "value": "@activity('Get ORGANIZATION Config').output.value[0].TARGET_SCHEMA",
+                                        "type": "Expression"
+                                    },
+                                    "TARGET_TABLE": {
+                                        "value": "@activity('Get ORGANIZATION Config').output.value[0].TARGET_TABLE",
+                                        "type": "Expression"
+                                    },
+                                    "AKV_Name": {
+                                        "value": "@pipeline().parameters.AKV_Name",
+                                        "type": "Expression"
+                                    }
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "name": "Load TIERS to Snowflake",
+                        "type": "Copy",
+                        "dependsOn": [
+                            {
+                                "activity": "Extract TIERS to Doorstep",
+                                "dependencyConditions": [
+                                    "Succeeded"
+                                ]
+                            }
+                        ],
+                        "policy": {
+                            "timeout": "0.01:30:00",
+                            "retry": 2,
+                            "retryIntervalInSeconds": 300,
+                            "secureOutput": false,
+                            "secureInput": false
+                        },
+                        "userProperties": [],
+                        "typeProperties": {
+                            "source": {
+                                "type": "ParquetSource",
+                                "storeSettings": {
+                                    "type": "AzureBlobStorageReadSettings",
+                                    "recursive": true
+                                },
+                                "formatSettings": {
+                                    "type": "ParquetReadSettings"
+                                }
+                            },
+                            "sink": {
+                                "type": "SnowflakeSink",
+                                "importSettings": {
+                                    "type": "SnowflakeImportCopyCommand",
+                                    "additionalCopyOptions": {
+                                        "PURGE": "TRUE"
+                                    }
+                                }
+                            },
+                            "enableStaging": false
+                        },
+                        "inputs": [
+                            {
+                                "referenceName": "Doorstep_Source_Files",
+                                "type": "DatasetReference",
+                                "parameters": {
+                                    "Source_File_Name": {
+                                        "value": "@toLower\n(concat(activity('Get TIER Config').output.value[0].SOURCE_KEY, '_',\n    activity('Get TIER Config').output.value[0].SOURCE_SCHEMA,\n    '_',\n    activity('Get TIER Config').output.value[0].SOURCE_TABLE)\n)",
+                                        "type": "Expression"
+                                    },
+                                    "AKV_Name": {
+                                        "value": "@pipeline().parameters.AKV_Name",
+                                        "type": "Expression"
+                                    }
+                                }
+                            }
+                        ],
+                        "outputs": [
+                            {
+                                "referenceName": "Snowflake_Target",
+                                "type": "DatasetReference",
+                                "parameters": {
+                                    "TARGET_SCHEMA": {
+                                        "value": "@activity('Get TIER Config').output.value[0].TARGET_SCHEMA",
+                                        "type": "Expression"
+                                    },
+                                    "TARGET_TABLE": {
+                                        "value": "@activity('Get TIER Config').output.value[0].TARGET_TABLE",
+                                        "type": "Expression"
+                                    },
+                                    "AKV_Name": {
+                                        "value": "@pipeline().parameters.AKV_Name",
+                                        "type": "Expression"
+                                    }
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "name": "Perform Merge only if Data exists",
+                        "type": "IfCondition",
+                        "dependsOn": [
+                            {
+                                "activity": "Update Source Watermark",
+                                "dependencyConditions": [
+                                    "Completed"
+                                ]
+                            }
+                        ],
+                        "userProperties": [],
+                        "typeProperties": {
+                            "expression": {
+                                "value": "@or\n(\ngreater(activity('Extract CLIENTS to Doorstep').output.rowsRead, 0),\ngreater(activity('Extract REGIONS to Doorstep').output.rowsRead, 0),\ngreater(activity('Extract ORGANIZATIONS to Doorstep').output.rowsRead, 0),\ngreater(activity('Extract TIERS to Doorstep').output.rowsRead, 0)\n)",
+                                "type": "Expression"
+                            },
+                            "ifTrueActivities": [
+                                {
+                                    "name": "Merge Load to Raw",
+                                    "description": "Merge the current row per PK from each multi-tenant Bronze Load (VARIANT) table to corresponding Raw (multi-column) table and adds conformed CLIENT_KEY",
+                                    "type": "ExecutePipeline",
+                                    "dependsOn": [],
+                                    "userProperties": [],
+                                    "typeProperties": {
+                                        "pipeline": {
+                                            "referenceName": "Merge_Target_Load_to_Raw",
+                                            "type": "PipelineReference"
+                                        },
+                                        "waitOnCompletion": true,
+                                        "parameters": {
+                                            "AKV_Name": {
+                                                "value": "@pipeline().parameters.AKV_Name",
+                                                "type": "Expression"
+                                            },
+                                            "Region_Key": {
+                                                "value": "@pipeline().parameters.Region_key",
+                                                "type": "Expression"
+                                            },
+                                            "Driver_Filter_Clause": {
+                                                "value": "@concat('AND UPPER(SOURCE_ENDPOINT_TYPE) = ', '''', 'REST API', '''', ' ', pipeline().parameters.Driver_Filter_Clause)",
+                                                "type": "Expression"
+                                            },
+                                            "Incremental_Merge_Load_to_Raw": {
+                                                "value": "@pipeline().parameters.Incremental_Merge_Load_to_Raw",
+                                                "type": "Expression"
+                                            },
+                                            "Driver_Database": {
+                                                "value": "@pipeline().parameters.Driver_Database",
+                                                "type": "Expression"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    {
+                        "name": "Get CLIENT Config",
+                        "description": "",
+                        "type": "Lookup",
+                        "dependsOn": [],
+                        "policy": {
+                            "timeout": "0.00:15:00",
+                            "retry": 2,
+                            "retryIntervalInSeconds": 120,
+                            "secureOutput": false,
+                            "secureInput": false
+                        },
+                        "userProperties": [],
+                        "typeProperties": {
+                            "source": {
+                                "type": "SnowflakeSource",
+                                "query": {
+                                    "value": "SELECT TOP 1\n    SOURCE_KEY,\n    SOURCE_HOST,\n    SOURCE_SCHEMA,\n    SOURCE_TABLE,\n    SOURCE_ENDPOINT,\n    SOURCE_WATERMARK,\n    TARGET_SCHEMA,\n    TARGET_TABLE\nFROM @{pipeline().parameters.Driver_Database}.COLLECTOR.CONFIG_SOURCE_DRIVER\nWHERE REGION_KEY = '@{pipeline().parameters.Region_key}'\nAND UPPER(SOURCE_ENDPOINT_TYPE) = 'REST API' AND SOURCE_TABLE = 'CLIENT';",
+                                    "type": "Expression"
+                                },
+                                "exportSettings": {
+                                    "type": "SnowflakeExportCopyCommand"
+                                }
+                            },
+                            "dataset": {
+                                "referenceName": "Snowflake_Operations",
+                                "type": "DatasetReference",
+                                "parameters": {
+                                    "AKV_Name": {
+                                        "value": "@pipeline().parameters.AKV_Name",
+                                        "type": "Expression"
+                                    }
+                                }
+                            },
+                            "firstRowOnly": false
+                        }
+                    },
+                    {
+                        "name": "Get REGION Config",
+                        "description": "",
+                        "type": "Lookup",
+                        "dependsOn": [],
+                        "policy": {
+                            "timeout": "0.00:15:00",
+                            "retry": 2,
+                            "retryIntervalInSeconds": 120,
+                            "secureOutput": false,
+                            "secureInput": false
+                        },
+                        "userProperties": [],
+                        "typeProperties": {
+                            "source": {
+                                "type": "SnowflakeSource",
+                                "query": {
+                                    "value": "SELECT TOP 1\n    SOURCE_KEY,\n    SOURCE_HOST,\n    SOURCE_SCHEMA,\n    SOURCE_TABLE,\n    SOURCE_ENDPOINT,\n    SOURCE_WATERMARK,\n    TARGET_SCHEMA,\n    TARGET_TABLE\nFROM @{pipeline().parameters.Driver_Database}.COLLECTOR.CONFIG_SOURCE_DRIVER\nWHERE REGION_KEY = '@{pipeline().parameters.Region_key}'\nAND UPPER(SOURCE_ENDPOINT_TYPE) = 'REST API' AND SOURCE_TABLE = 'REGION';",
+                                    "type": "Expression"
+                                },
+                                "exportSettings": {
+                                    "type": "SnowflakeExportCopyCommand"
+                                }
+                            },
+                            "dataset": {
+                                "referenceName": "Snowflake_Operations",
+                                "type": "DatasetReference",
+                                "parameters": {
+                                    "AKV_Name": {
+                                        "value": "@pipeline().parameters.AKV_Name",
+                                        "type": "Expression"
+                                    }
+                                }
+                            },
+                            "firstRowOnly": false
+                        }
+                    },
+                    {
+                        "name": "Get ORGANIZATION Config",
+                        "description": "",
+                        "type": "Lookup",
+                        "dependsOn": [],
+                        "policy": {
+                            "timeout": "0.00:15:00",
+                            "retry": 2,
+                            "retryIntervalInSeconds": 120,
+                            "secureOutput": false,
+                            "secureInput": false
+                        },
+                        "userProperties": [],
+                        "typeProperties": {
+                            "source": {
+                                "type": "SnowflakeSource",
+                                "query": {
+                                    "value": "SELECT TOP 1\n    SOURCE_KEY,\n    SOURCE_HOST,\n    SOURCE_SCHEMA,\n    SOURCE_TABLE,\n    SOURCE_ENDPOINT,\n    SOURCE_WATERMARK,\n    TARGET_SCHEMA,\n    TARGET_TABLE\nFROM @{pipeline().parameters.Driver_Database}.COLLECTOR.CONFIG_SOURCE_DRIVER\nWHERE REGION_KEY = '@{pipeline().parameters.Region_key}'\nAND UPPER(SOURCE_ENDPOINT_TYPE) = 'REST API' AND SOURCE_TABLE = 'ORGANIZATION';",
+                                    "type": "Expression"
+                                },
+                                "exportSettings": {
+                                    "type": "SnowflakeExportCopyCommand"
+                                }
+                            },
+                            "dataset": {
+                                "referenceName": "Snowflake_Operations",
+                                "type": "DatasetReference",
+                                "parameters": {
+                                    "AKV_Name": {
+                                        "value": "@pipeline().parameters.AKV_Name",
+                                        "type": "Expression"
+                                    }
+                                }
+                            },
+                            "firstRowOnly": false
+                        }
+                    },
+                    {
+                        "name": "Get TIER Config",
+                        "description": "",
+                        "type": "Lookup",
+                        "dependsOn": [],
+                        "policy": {
+                            "timeout": "0.00:15:00",
+                            "retry": 2,
+                            "retryIntervalInSeconds": 120,
+                            "secureOutput": false,
+                            "secureInput": false
+                        },
+                        "userProperties": [],
+                        "typeProperties": {
+                            "source": {
+                                "type": "SnowflakeSource",
+                                "query": {
+                                    "value": "SELECT TOP 1\n    SOURCE_KEY,\n    SOURCE_HOST,\n    SOURCE_SCHEMA,\n    SOURCE_TABLE,\n    SOURCE_ENDPOINT,\n    SOURCE_WATERMARK,\n    TARGET_SCHEMA,\n    TARGET_TABLE\nFROM @{pipeline().parameters.Driver_Database}.COLLECTOR.CONFIG_SOURCE_DRIVER\nWHERE REGION_KEY = '@{pipeline().parameters.Region_key}'\nAND UPPER(SOURCE_ENDPOINT_TYPE) = 'REST API' AND SOURCE_TABLE = 'TIER';",
+                                    "type": "Expression"
+                                },
+                                "exportSettings": {
+                                    "type": "SnowflakeExportCopyCommand"
+                                }
+                            },
+                            "dataset": {
+                                "referenceName": "Snowflake_Operations",
+                                "type": "DatasetReference",
+                                "parameters": {
+                                    "AKV_Name": {
+                                        "value": "@pipeline().parameters.AKV_Name",
+                                        "type": "Expression"
+                                    }
+                                }
+                            },
+                            "firstRowOnly": false
+                        }
+                    },
+                    {
+                        "name": "Log Load Raw Table Rows Count",
+                        "type": "ExecutePipeline",
+                        "state": "Inactive",
+                        "onInactiveMarkAs": "Skipped",
+                        "dependsOn": [
+                            {
+                                "activity": "Perform Merge only if Data exists",
+                                "dependencyConditions": [
+                                    "Succeeded"
+                                ]
+                            }
+                        ],
+                        "userProperties": [],
+                        "typeProperties": {
+                            "pipeline": {
+                                "referenceName": "Log_Load_Raw_Table_Rows_Count",
+                                "type": "PipelineReference"
+                            },
+                            "waitOnCompletion": true,
+                            "parameters": {
+                                "AKV_Name": {
+                                    "value": "@pipeline().parameters.AKV_Name",
+                                    "type": "Expression"
+                                },
+                                "Region_Key": {
+                                    "value": "@pipeline().parameters.Region_Key",
+                                    "type": "Expression"
+                                },
+                                "Driver_Filter_Clause": {
+                                    "value": "@concat('AND UPPER(SOURCE_ENDPOINT_TYPE) = ', '''', 'REST API', '''', ' ', pipeline().parameters.Driver_Filter_Clause)",
+                                    "type": "Expression"
+                                },
+                                "Driver_Database": {
+                                    "value": "@pipeline().parameters.Driver_Database",
+                                    "type": "Expression"
+                                }
+                            }
+                        }
+                    },
+                    {
+                        "name": "Log Source Count",
+                        "type": "ForEach",
+                        "state": "Inactive",
+                        "onInactiveMarkAs": "Skipped",
+                        "dependsOn": [
+                            {
+                                "activity": "Perform Merge only if Data exists",
+                                "dependencyConditions": [
+                                    "Succeeded"
+                                ]
+                            }
+                        ],
+                        "userProperties": [],
+                        "typeProperties": {
+                            "items": {
+                                "value": "@activity('Get Config for All CM tables').output.value",
+                                "type": "Expression"
+                            },
+                            "batchCount": 50,
+                            "activities": [
+                                {
+                                    "name": "Log if Rows exist at Source",
+                                    "type": "IfCondition",
+                                    "dependsOn": [],
+                                    "userProperties": [],
+                                    "typeProperties": {
+                                        "expression": {
+                                            "value": "@or\n(\nAND(greater(activity('Extract CLIENTS to Doorstep').output.rowsRead, 0), equals(item().SOURCE_TABLE, 'CLIENT')),\nAND(greater(activity('Extract REGIONS to Doorstep').output.rowsRead, 0), equals(item().SOURCE_TABLE, 'REGION')),\nAND(greater(activity('Extract ORGANIZATIONS to Doorstep').output.rowsRead, 0), equals(item().SOURCE_TABLE, 'ORGANIZATION')),\nAND(greater(activity('Extract TIERS to Doorstep').output.rowsRead, 0), equals(item().SOURCE_TABLE, 'TIER'))\n)",
+                                            "type": "Expression"
+                                        },
+                                        "ifTrueActivities": [
+                                            {
+                                                "name": "Log Source Object Rows Count",
+                                                "description": "Calls stored procedure because ADF does not support direct INSERT INTO statements.",
+                                                "type": "Lookup",
+                                                "dependsOn": [],
+                                                "policy": {
+                                                    "timeout": "0.00:10:00",
+                                                    "retry": 2,
+                                                    "retryIntervalInSeconds": 60,
+                                                    "secureOutput": false,
+                                                    "secureInput": false
+                                                },
+                                                "userProperties": [],
+                                                "typeProperties": {
+                                                    "source": {
+                                                        "type": "SnowflakeSource",
+                                                        "query": {
+                                                            "value": "CALL @{pipeline().parameters.Driver_Database}.COLLECTOR.INSERT_LOG_SOURCE_LOAD_RECONCILIATION\n(\n    '@{utcnow()}'\n    , 'EXTRACT' --PHASE\n    , '@{item().SOURCE_KEY}'\n    , '@{item().SOURCE_HOST}'\n    , '@{item().SOURCE_ENDPOINT}'\n\n    , '@{item().SOURCE_SCHEMA}'\n    , '@{item().SOURCE_TABLE}'\n    , @{if(AND(greater(activity('Extract CLIENTS to Doorstep').output.rowsRead, 0), equals(item().SOURCE_TABLE, 'CLIENT')), activity('Extract CLIENTS to Doorstep').output.rowsRead\n        , if(AND(greater(activity('Extract REGIONS to Doorstep').output.rowsRead, 0), equals(item().SOURCE_TABLE, 'REGION')), activity('Extract REGIONS to Doorstep').output.rowsRead\n        , if(AND(greater(activity('Extract ORGANIZATIONS to Doorstep').output.rowsRead, 0), equals(item().SOURCE_TABLE, 'ORGANIZATION')), activity('Extract ORGANIZATIONS to Doorstep').output.rowsRead\n        , activity('Extract TIERS to Doorstep').output.rowsRead) )\n     )}\n    , '@{item().TARGET_SCHEMA}'\n    , '@{item().TARGET_TABLE}'\n\n    , '@{item().TARGET_RAW_SCHEMA}'\n    , '@{item().TARGET_RAW_TABLE}'\n    , NULL --TARGET_LOAD_ROW_COUNT\n    , NULL --TARGET_LOAD_LATEST_RECORD_ROW_COUNT\n    , NULL --TARGET_RAW_ROW_COUNT\n\n    , '@{pipeline().parameters.Driver_Database}'\n    , '@{pipeline().TriggerId}'\n    , '@{pipeline().RunId}'\n    , '@{pipeline()?.TriggeredByPipelineRunId}'\n);",
+                                                            "type": "Expression"
+                                                        },
+                                                        "exportSettings": {
+                                                            "type": "SnowflakeExportCopyCommand"
+                                                        }
+                                                    },
+                                                    "dataset": {
+                                                        "referenceName": "Snowflake_Operations",
+                                                        "type": "DatasetReference",
+                                                        "parameters": {
+                                                            "AKV_Name": {
+                                                                "value": "@pipeline().parameters.AKV_Name",
+                                                                "type": "Expression"
+                                                            }
+                                                        }
+                                                    },
+                                                    "firstRowOnly": false
+                                                }
+                                            }
+                                        ]
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ],
+                "policy": {
+                    "elapsedTimeMetric": {}
+                },
+                "parameters": {
+                    "AKV_Name": {
+                        "type": "string"
+                    },
+                    "Region_Key": {
+                        "type": "string"
+                    },
+                    "Driver_Database": {
+                        "type": "string"
+                    },
+                    "Driver_Filter_Clause": {
+                        "type": "string"
+                    },
+                    "Incremental_Merge_Load_to_Raw": {
+                        "type": "string"
+                    },
+                    "Auth0_Url": {
+                        "type": "string"
+                    }
+                },
+                "variables": {
+                    "NEW_SOURCE_WATERMARK": {
+                        "type": "String"
+                    }
+                },
+                "folder": {
+                    "name": "Analytics_Platform_Collector"
+                },
+                "annotations": []
+            },
+            "dependsOn": [
+                "[concat(variables('factoryId'), '/pipelines/Merge_Target_Load_to_Raw')]"
+            ]
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/_Master_Extract_to_Snowflake')]",
+            "type": "Microsoft.DataFactory/factories/pipelines",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "description": "Incrementally extract source tables into parquet files and loads into Snowflake",
+                "activities": [
+                    {
+                        "name": "Extract to Doorstep and Load to Snowflake",
+                        "description": "Extract SQL Database tables to Doorstep semi-structured files.\n\n2. Copy and combine extracted semi-structured files from Doorstep to multi-tenant Snowflake Bronze Load (VARIANT) tables",
+                        "type": "ExecutePipeline",
+                        "dependsOn": [
+                            {
+                                "activity": "Extract Master Databases",
+                                "dependencyConditions": [
+                                    "Completed"
+                                ]
+                            },
+                            {
+                                "activity": "Extract and Load client management",
+                                "dependencyConditions": [
+                                    "Completed"
+                                ]
+                            }
+                        ],
+                        "userProperties": [],
+                        "typeProperties": {
+                            "pipeline": {
+                                "referenceName": "Extract_Load_to_Snowflake",
+                                "type": "PipelineReference"
+                            },
+                            "waitOnCompletion": true,
+                            "parameters": {
+                                "AKV_Name": {
+                                    "value": "@pipeline().parameters.AKV_Name",
+                                    "type": "Expression"
+                                },
+                                "Region_key": {
+                                    "value": "@pipeline().parameters.Region_key",
+                                    "type": "Expression"
+                                },
+                                "Driver_Filter_Clause": {
+                                    "value": "@pipeline().parameters.Driver_Filter_Clause",
+                                    "type": "Expression"
+                                },
+                                "Driver_Database": {
+                                    "value": "@pipeline().parameters.Driver_Database",
+                                    "type": "Expression"
+                                }
+                            }
+                        }
+                    },
+                    {
+                        "name": "Log Source Object Rows Count",
+                        "description": "This pipeline will log count of rows.",
+                        "type": "ExecutePipeline",
+                        "state": "Inactive",
+                        "onInactiveMarkAs": "Skipped",
+                        "dependsOn": [
+                            {
+                                "activity": "Merge Load to Raw",
+                                "dependencyConditions": [
+                                    "Succeeded"
+                                ]
+                            }
+                        ],
+                        "userProperties": [],
+                        "typeProperties": {
+                            "pipeline": {
+                                "referenceName": "Log_Source_Object_Rows_Count",
+                                "type": "PipelineReference"
+                            },
+                            "waitOnCompletion": true,
+                            "parameters": {
+                                "AKV_Name": {
+                                    "value": "@pipeline().parameters.AKV_Name",
+                                    "type": "Expression"
+                                },
+                                "Region_Key": {
+                                    "value": "@pipeline().parameters.Region_key",
+                                    "type": "Expression"
+                                },
+                                "Driver_Filter_Clause": {
+                                    "value": "@concat('AND UPPER(SOURCE_ENDPOINT_TYPE) = ', '''', 'DATABASE', '''', ' ', pipeline().parameters.Driver_Filter_Clause)",
+                                    "type": "Expression"
+                                },
+                                "Driver_Database": {
+                                    "value": "@pipeline().parameters.Driver_Database",
+                                    "type": "Expression"
+                                }
+                            }
+                        }
+                    },
+                    {
+                        "name": "Log Load and Raw Table Pair Rows Count",
+                        "description": "This pipeline will log count of rows from LOAD and RAW Tables.",
+                        "type": "ExecutePipeline",
+                        "state": "Inactive",
+                        "onInactiveMarkAs": "Skipped",
+                        "dependsOn": [
+                            {
+                                "activity": "Merge Load to Raw",
+                                "dependencyConditions": [
+                                    "Succeeded"
+                                ]
+                            }
+                        ],
+                        "userProperties": [],
+                        "typeProperties": {
+                            "pipeline": {
+                                "referenceName": "Log_Load_Raw_Table_Rows_Count",
+                                "type": "PipelineReference"
+                            },
+                            "waitOnCompletion": true,
+                            "parameters": {
+                                "AKV_Name": {
+                                    "value": "@pipeline().parameters.AKV_Name",
+                                    "type": "Expression"
+                                },
+                                "Region_Key": {
+                                    "value": "@pipeline().parameters.Region_key",
+                                    "type": "Expression"
+                                },
+                                "Driver_Filter_Clause": {
+                                    "value": "@concat('AND UPPER(SOURCE_ENDPOINT_TYPE) = ', '''', 'DATABASE', '''', ' ', pipeline().parameters.Driver_Filter_Clause)",
+                                    "type": "Expression"
+                                },
+                                "Driver_Database": {
+                                    "value": "@pipeline().parameters.Driver_Database",
+                                    "type": "Expression"
+                                }
+                            }
+                        }
+                    },
+                    {
+                        "name": "Merge Load to Raw",
+                        "description": "Merge the current row per PK from each multi-tenant Bronze Load (VARIANT) table to corresponding Raw (multi-column) table and adds conformed CLIENT_KEY",
+                        "type": "ExecutePipeline",
+                        "dependsOn": [
+                            {
+                                "activity": "Extract to Doorstep and Load to Snowflake",
+                                "dependencyConditions": [
+                                    "Completed"
+                                ]
+                            }
+                        ],
+                        "userProperties": [],
+                        "typeProperties": {
+                            "pipeline": {
+                                "referenceName": "Merge_Target_Load_to_Raw",
+                                "type": "PipelineReference"
+                            },
+                            "waitOnCompletion": true,
+                            "parameters": {
+                                "AKV_Name": {
+                                    "value": "@pipeline().parameters.AKV_Name",
+                                    "type": "Expression"
+                                },
+                                "Region_Key": {
+                                    "value": "@pipeline().parameters.Region_key",
+                                    "type": "Expression"
+                                },
+                                "Driver_Filter_Clause": {
+                                    "value": "@concat('AND UPPER(SOURCE_ENDPOINT_TYPE) = ', '''', 'DATABASE', '''', ' ', pipeline().parameters.Driver_Filter_Clause)",
+                                    "type": "Expression"
+                                },
+                                "Incremental_Merge_Load_to_Raw": {
+                                    "value": "@pipeline().parameters.Incremental_Merge_Load_to_Raw",
+                                    "type": "Expression"
+                                },
+                                "Driver_Database": {
+                                    "value": "@pipeline().parameters.Driver_Database",
+                                    "type": "Expression"
+                                }
+                            }
+                        }
+                    },
+                    {
+                        "name": "Sync Masking Policy With Attribute Metadata",
+                        "description": "It will dynamically apply masking in ACCOUNT records based on PII information available in DTD table.",
+                        "type": "ExecutePipeline",
+                        "dependsOn": [
+                            {
+                                "activity": "Merge Load to Raw",
+                                "dependencyConditions": [
+                                    "Succeeded"
+                                ]
+                            }
+                        ],
+                        "userProperties": [],
+                        "typeProperties": {
+                            "pipeline": {
+                                "referenceName": "Sync_Masking_Policy_With_Attribute_Metadata",
+                                "type": "PipelineReference"
+                            },
+                            "waitOnCompletion": true,
+                            "parameters": {
+                                "AKV_Name": {
+                                    "value": "@pipeline().parameters.AKV_Name",
+                                    "type": "Expression"
+                                },
+                                "Region_Key": {
+                                    "value": "@pipeline().parameters.Region_key",
+                                    "type": "Expression"
+                                },
+                                "Driver_Filter_Clause": {
+                                    "value": "@pipeline().parameters.Driver_Filter_Clause",
+                                    "type": "Expression"
+                                },
+                                "Driver_Database": {
+                                    "value": "@pipeline().parameters.Driver_Database",
+                                    "type": "Expression"
+                                },
+                                "Incremental_Sync_Mask": {
+                                    "value": "@pipeline().parameters.Incremental_Sync_Mask",
+                                    "type": "Expression"
+                                }
+                            }
+                        }
+                    },
+                    {
+                        "name": "Extract Master Databases",
+                        "type": "ExecutePipeline",
+                        "dependsOn": [],
+                        "userProperties": [],
+                        "typeProperties": {
+                            "pipeline": {
+                                "referenceName": "Extract_Master_Databases",
+                                "type": "PipelineReference"
+                            },
+                            "waitOnCompletion": true,
+                            "parameters": {
+                                "AKV_Name": {
+                                    "value": "@pipeline().parameters.AKV_Name",
+                                    "type": "Expression"
+                                },
+                                "Region_key": {
+                                    "value": "@pipeline().parameters.Region_key",
+                                    "type": "Expression"
+                                },
+                                "Driver_Database": {
+                                    "value": "@pipeline().parameters.Driver_Database",
+                                    "type": "Expression"
+                                }
+                            }
+                        }
+                    },
+                    {
+                        "name": "Extract and Load client management",
+                        "type": "IfCondition",
+                        "dependsOn": [],
+                        "userProperties": [],
+                        "typeProperties": {
+                            "expression": {
+                                "value": "@pipeline().parameters.Extract_Client_Management",
+                                "type": "Expression"
+                            },
+                            "ifTrueActivities": [
+                                {
+                                    "name": "Extract Client management Data",
+                                    "type": "ExecutePipeline",
+                                    "dependsOn": [],
+                                    "userProperties": [],
+                                    "typeProperties": {
+                                        "pipeline": {
+                                            "referenceName": "Extract_CM_Load_to_Snowflake",
+                                            "type": "PipelineReference"
+                                        },
+                                        "waitOnCompletion": true,
+                                        "parameters": {
+                                            "AKV_Name": {
+                                                "value": "@pipeline().parameters.AKV_Name",
+                                                "type": "Expression"
+                                            },
+                                            "Region_Key": {
+                                                "value": "@pipeline().parameters.Region_key",
+                                                "type": "Expression"
+                                            },
+                                            "Driver_Database": {
+                                                "value": "@pipeline().parameters.Driver_Database",
+                                                "type": "Expression"
+                                            },
+                                            "Driver_Filter_Clause": {
+                                                "value": "AND TRUE",
+                                                "type": "Expression"
+                                            },
+                                            "Incremental_Merge_Load_to_Raw": {
+                                                "value": "@pipeline().parameters.Incremental_Merge_Load_to_Raw",
+                                                "type": "Expression"
+                                            },
+                                            "Auth0_Url": {
+                                                "value": "@pipeline().parameters.Auth0_Url",
+                                                "type": "Expression"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    {
+                        "name": "Trigger_DBT_Jobs",
+                        "type": "ExecutePipeline",
+                        "dependsOn": [
+                            {
+                                "activity": "Sync Masking Policy With Attribute Metadata",
+                                "dependencyConditions": [
+                                    "Completed"
+                                ]
+                            }
+                        ],
+                        "userProperties": [],
+                        "typeProperties": {
+                            "pipeline": {
+                                "referenceName": "Trigger_DBT_Jobs",
+                                "type": "PipelineReference"
+                            },
+                            "waitOnCompletion": true,
+                            "parameters": {
+                                "AKV_Name": {
+                                    "value": "@pipeline().parameters.AKV_Name",
+                                    "type": "Expression"
+                                },
+                                "Driver_Database": {
+                                    "value": "@pipeline().parameters.Driver_Database",
+                                    "type": "Expression"
+                                },
+                                "DBT_Job_IDs": {
+                                    "value": "@pipeline().parameters.DBT_Job_IDs",
+                                    "type": "Expression"
+                                },
+                                "DBT_Account_ID": "6827"
+                            }
+                        }
+                    }
+                ],
+                "policy": {
+                    "elapsedTimeMetric": {}
+                },
+                "parameters": {
+                    "AKV_Name": {
+                        "type": "string"
+                    },
+                    "Region_key": {
+                        "type": "string"
+                    },
+                    "Driver_Filter_Clause": {
+                        "type": "string"
+                    },
+                    "Incremental_Merge_Load_to_Raw": {
+                        "type": "bool"
+                    },
+                    "Driver_Database": {
+                        "type": "string"
+                    },
+                    "Incremental_Sync_Mask": {
+                        "type": "bool"
+                    },
+                    "DBT_Job_IDs": {
+                        "type": "string"
+                    },
+                    "Auth0_Url": {
+                        "type": "string"
+                    },
+                    "Extract_Client_Management": {
+                        "type": "bool"
+                    }
+                },
+                "variables": {
+                    "DBname": {
+                        "type": "String"
+                    },
+                    "namedb": {
+                        "type": "String"
+                    }
+                },
+                "folder": {
+                    "name": "Analytics_Platform_Collector"
+                },
+                "annotations": []
+            },
+            "dependsOn": [
+                "[concat(variables('factoryId'), '/pipelines/Log_Source_Object_Rows_Count')]",
+                "[concat(variables('factoryId'), '/pipelines/Merge_Target_Load_to_Raw')]",
+                "[concat(variables('factoryId'), '/pipelines/Extract_Master_Databases')]",
+                "[concat(variables('factoryId'), '/pipelines/Extract_CM_Load_to_Snowflake')]"
+            ]
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/Analytics_Platform_Extract_Load_Raw')]",
+            "type": "Microsoft.DataFactory/factories/triggers",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "annotations": [],
+                "runtimeState": "Stopped",
+                "pipelines": [
+                    {
+                        "pipelineReference": {
+                            "referenceName": "_Master_Extract_to_Snowflake",
+                            "type": "PipelineReference"
+                        },
+                        "parameters": {
+                            "AKV_Name": "[parameters('Analytics_Platform_Extract_Load_Raw_properties__Master_Extract_to_Snowflake_parameters_AKV_Name')]",
+                            "Region_key": "[parameters('Analytics_Platform_Extract_Load_Raw_properties__Master_Extract_to_Snowflake_parameters_Region_key')]",
+                            "Driver_Filter_Clause": "[parameters('Analytics_Platform_Extract_Load_Raw_properties__Master_Extract_to_Snowflake_parameters_Driver_Filter_Clause')]",
+                            "Incremental_Merge_Load_to_Raw": "[parameters('Analytics_Platform_Extract_Load_Raw_properties__Master_Extract_to_Snowflake_parameters_Incremental_Merge_Load_to_Raw')]",
+                            "Driver_Database": "[parameters('Analytics_Platform_Extract_Load_Raw_properties__Master_Extract_to_Snowflake_parameters_Driver_Database')]",
+                            "Incremental_Sync_Mask": "[parameters('Analytics_Platform_Extract_Load_Raw_properties__Master_Extract_to_Snowflake_parameters_Incremental_Sync_Mask')]",
+                            "DBT_Job_IDs": "[parameters('Analytics_Platform_Extract_Load_Raw_properties__Master_Extract_to_Snowflake_parameters_DBT_Job_IDs')]",
+                            "Auth0_Url": "[parameters('Analytics_Platform_Extract_Load_Raw_properties__Master_Extract_to_Snowflake_parameters_Auth0_Url')]",
+                            "Extract_Client_Management": "[parameters('Analytics_Platform_Extract_Load_Raw_properties__Master_Extract_to_Snowflake_parameters_Extract_Client_Management')]"
+                        }
+                    }
+                ],
+                "type": "ScheduleTrigger",
+                "typeProperties": {
+                    "recurrence": {
+                        "frequency": "Day",
+                        "interval": 1,
+                        "startTime": "2022-04-20T12:00:00",
+                        "timeZone": "Mountain Standard Time",
+                        "schedule": {
+                            "minutes": [
+                                0
+                            ],
+                            "hours": [
+                                5,
+                                17
+                            ]
+                        }
+                    }
+                }
+            },
+            "dependsOn": [
+                "[concat(variables('factoryId'), '/pipelines/_Master_Extract_to_Snowflake')]"
+            ]
+        }
+    ]
+}

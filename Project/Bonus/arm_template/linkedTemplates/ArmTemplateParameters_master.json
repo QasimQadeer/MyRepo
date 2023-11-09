@@ -1,0 +1,33 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentParameters.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "factoryName": {
+            "value": "dev-use-collector-adf"
+        },
+        "collector_akv_properties_typeProperties_baseUrl": {
+            "value": "https://@{linkedService().AKV_Name}.vault.azure.net/"
+        },
+        "collector_asa_doorstep_sas_properties_typeProperties_sasUri_secretName": {
+            "value": "DOORSTEP-ASA-sas-uri-rw"
+        },
+        "collector_snowflake_properties_typeProperties_connectionString_secretName": {
+            "value": "analytics-snowflake-loader-adf-connection-string"
+        },
+        "ls_collector_client_management_rest_properties_typeProperties_url": {
+            "value": "@{linkedService().BaseURL}"
+        },
+        "adfcollectorpe_properties_privateLinkResourceId": {
+            "value": "/subscriptions/4523e73e-96d4-4b33-b9b9-0f308b2cfae4/resourceGroups/dev-sql-use/providers/Microsoft.Sql/servers/dev-clusterinfra-use"
+        },
+        "adfcollectorpe_properties_groupId": {
+            "value": "sqlServer"
+        },
+        "containerUri": {
+            "value": ""
+        },
+        "containerSasToken": {
+            "value": ""
+        }
+    }
+}

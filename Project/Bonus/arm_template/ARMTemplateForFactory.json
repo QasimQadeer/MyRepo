@@ -1,0 +1,770 @@
+{
+    "$schema": "http://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "factoryName": {
+            "type": "string",
+            "metadata": "Data Factory name",
+            "defaultValue": "dev-use-collector-adf"
+        },
+        "collector_akv_properties_typeProperties_baseUrl": {
+            "type": "string",
+            "defaultValue": "https://@{linkedService().AKV_Name}.vault.azure.net/"
+        },
+        "collector_asa_doorstep_sas_properties_typeProperties_sasUri_secretName": {
+            "type": "string",
+            "defaultValue": "DOORSTEP-ASA-sas-uri-rw"
+        },
+        "collector_snowflake_properties_typeProperties_connectionString_secretName": {
+            "type": "string",
+            "defaultValue": "analytics-snowflake-loader-adf-connection-string"
+        },
+        "ls_collector_client_management_rest_properties_typeProperties_url": {
+            "type": "string",
+            "defaultValue": "@{linkedService().BaseURL}"
+        },
+        "adfcollectorpe_properties_privateLinkResourceId": {
+            "type": "string",
+            "defaultValue": "/subscriptions/4523e73e-96d4-4b33-b9b9-0f308b2cfae4/resourceGroups/dev-sql-use/providers/Microsoft.Sql/servers/dev-clusterinfra-use"
+        },
+        "adfcollectorpe_properties_groupId": {
+            "type": "string",
+            "defaultValue": "sqlServer"
+        }
+    },
+    "variables": {
+        "factoryId": "[concat('Microsoft.DataFactory/factories/', parameters('factoryName'))]"
+    },
+    "resources": [
+        {
+            "name": "[concat(parameters('factoryName'), '/Call API and Load into Snowflake')]",
+            "type": "Microsoft.DataFactory/factories/pipelines",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "activities": [
+                    {
+                        "name": "ForEach",
+                        "type": "ForEach",
+                        "dependsOn": [
+                            {
+                                "activity": "Extract Names from Arrays",
+                                "dependencyConditions": [
+                                    "Succeeded"
+                                ]
+                            }
+                        ],
+                        "userProperties": [],
+                        "typeProperties": {
+                            "items": {
+                                "value": "@variables('Names')",
+                                "type": "Expression"
+                            },
+                            "batchCount": 50,
+                            "activities": [
+                                {
+                                    "name": "Extract Gender to Doorstep",
+                                    "type": "Copy",
+                                    "dependsOn": [],
+                                    "policy": {
+                                        "timeout": "0.00:10:00",
+                                        "retry": 0,
+                                        "retryIntervalInSeconds": 30,
+                                        "secureOutput": false,
+                                        "secureInput": false
+                                    },
+                                    "userProperties": [],
+                                    "typeProperties": {
+                                        "source": {
+                                            "type": "RestSource",
+                                            "httpRequestTimeout": "00:00:10",
+                                            "requestInterval": "00.00:01:00.000",
+                                            "requestMethod": "GET",
+                                            "paginationRules": {
+                                                "supportRFC5988": "true"
+                                            }
+                                        },
+                                        "sink": {
+                                            "type": "JsonSink",
+                                            "storeSettings": {
+                                                "type": "AzureBlobStorageWriteSettings"
+                                            },
+                                            "formatSettings": {
+                                                "type": "JsonWriteSettings"
+                                            }
+                                        },
+                                        "enableStaging": false,
+                                        "validateDataConsistency": true,
+                                        "translator": {
+                                            "type": "TabularTranslator",
+                                            "mappings": [
+                                                {
+                                                    "source": {
+                                                        "path": "$['status']"
+                                                    },
+                                                    "sink": {
+                                                        "name": "status"
+                                                    }
+                                                },
+                                                {
+                                                    "source": {
+                                                        "path": "$['data']['Final']['gender']"
+                                                    },
+                                                    "sink": {
+                                                        "name": "data_Final_gender",
+                                                        "type": "String"
+                                                    }
+                                                }
+                                            ]
+                                        }
+                                    },
+                                    "inputs": [
+                                        {
+                                            "referenceName": "DS_Collector_CM_Rest",
+                                            "type": "DatasetReference",
+                                            "parameters": {
+                                                "RelativeURL": {
+                                                    "value": "@concat('https://innovaapi.aminer.cn/tools/v1/predict/gender?name=', pipeline().parameters.Name, '&org=Tsinghua')",
+                                                    "type": "Expression"
+                                                },
+                                                "BaseURL": {
+                                                    "value": "https://innovaapi.aminer.cn/tools/v1",
+                                                    "type": "Expression"
+                                                }
+                                            }
+                                        }
+                                    ],
+                                    "outputs": [
+                                        {
+                                            "referenceName": "doorstep_json",
+                                            "type": "DatasetReference",
+                                            "parameters": {
+                                                "Source_File_Name": {
+                                                    "value": "@toLower\n(concat('castmember-', pipeline().parameters.Name\n)\n\n",
+                                                    "type": "Expression"
+                                                }
+                                            }
+                                        }
+                                    ]
+                                },
+                                {
+                                    "name": "Load Gender info into Snowflake",
+                                    "type": "Copy",
+                                    "dependsOn": [
+                                        {
+                                            "activity": "Extract Gender to Doorstep",
+                                            "dependencyConditions": [
+                                                "Succeeded"
+                                            ]
+                                        }
+                                    ],
+                                    "policy": {
+                                        "timeout": "0.01:30:00",
+                                        "retry": 0,
+                                        "retryIntervalInSeconds": 30,
+                                        "secureOutput": false,
+                                        "secureInput": false
+                                    },
+                                    "userProperties": [],
+                                    "typeProperties": {
+                                        "source": {
+                                            "type": "JsonSource",
+                                            "storeSettings": {
+                                                "type": "AzureBlobStorageReadSettings",
+                                                "recursive": true,
+                                                "enablePartitionDiscovery": false
+                                            },
+                                            "formatSettings": {
+                                                "type": "JsonReadSettings"
+                                            }
+                                        },
+                                        "sink": {
+                                            "type": "SnowflakeSink",
+                                            "importSettings": {
+                                                "type": "SnowflakeImportCopyCommand",
+                                                "additionalCopyOptions": {
+                                                    "PURGE": "TRUE"
+                                                }
+                                            }
+                                        },
+                                        "enableStaging": false
+                                    },
+                                    "inputs": [
+                                        {
+                                            "referenceName": "doorstep_json",
+                                            "type": "DatasetReference",
+                                            "parameters": {
+                                                "Source_File_Name": {
+                                                    "value": "@toLower\n(concat('castmember-', pipeline().parameters.Name\n)\n\n",
+                                                    "type": "Expression"
+                                                }
+                                            }
+                                        }
+                                    ],
+                                    "outputs": [
+                                        {
+                                            "referenceName": "Snowflake_Target",
+                                            "type": "DatasetReference",
+                                            "parameters": {
+                                                "TARGET_SCHEMA": {
+                                                    "value": "netflix_titles",
+                                                    "type": "Expression"
+                                                },
+                                                "TARGET_TABLE": {
+                                                    "value": "cast_gender",
+                                                    "type": "Expression"
+                                                },
+                                                "AKV_Name": {
+                                                    "value": "dev-use-collector-akv",
+                                                    "type": "Expression"
+                                                }
+                                            }
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    },
+                    {
+                        "name": "Extract Names from Arrays",
+                        "description": "Split coma separated job IDs coming from a pipeline parameter and convert them into an array",
+                        "type": "SetVariable",
+                        "dependsOn": [],
+                        "policy": {
+                            "secureOutput": false,
+                            "secureInput": false
+                        },
+                        "userProperties": [],
+                        "typeProperties": {
+                            "variableName": "Names",
+                            "value": {
+                                "value": "@split(pipeline().parameters.Name,',')\n\n",
+                                "type": "Expression"
+                            }
+                        }
+                    }
+                ],
+                "policy": {
+                    "elapsedTimeMetric": {}
+                },
+                "parameters": {
+                    "Name": {
+                        "type": "string",
+                        "defaultValue": "Jie Tang"
+                    }
+                },
+                "variables": {
+                    "Names": {
+                        "type": "Array"
+                    }
+                },
+                "folder": {
+                    "name": "Project"
+                },
+                "annotations": []
+            },
+            "dependsOn": [
+                "[concat(variables('factoryId'), '/datasets/DS_Collector_CM_Rest')]",
+                "[concat(variables('factoryId'), '/datasets/doorstep_json')]",
+                "[concat(variables('factoryId'), '/datasets/Snowflake_Target')]"
+            ]
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/Fetch_Gender_Details')]",
+            "type": "Microsoft.DataFactory/factories/pipelines",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "activities": [
+                    {
+                        "name": "Get Names from Snowflake",
+                        "type": "Lookup",
+                        "dependsOn": [],
+                        "policy": {
+                            "timeout": "0.12:00:00",
+                            "retry": 0,
+                            "retryIntervalInSeconds": 30,
+                            "secureOutput": false,
+                            "secureInput": false
+                        },
+                        "userProperties": [],
+                        "typeProperties": {
+                            "source": {
+                                "type": "SnowflakeSource",
+                                "query": {
+                                    "value": "SELECT SHOW_ID, \"CAST\" as NAMES FROM dev_bronze.netflix_titles.cleansed_shows\nlimit 2;",
+                                    "type": "Expression"
+                                },
+                                "exportSettings": {
+                                    "type": "SnowflakeExportCopyCommand"
+                                }
+                            },
+                            "dataset": {
+                                "referenceName": "Snowflake_Operations",
+                                "type": "DatasetReference",
+                                "parameters": {
+                                    "AKV_Name": "dev-use-collector-akv"
+                                }
+                            },
+                            "firstRowOnly": false
+                        }
+                    },
+                    {
+                        "name": "ForEach",
+                        "type": "ForEach",
+                        "dependsOn": [
+                            {
+                                "activity": "Get Names from Snowflake",
+                                "dependencyConditions": [
+                                    "Succeeded"
+                                ]
+                            }
+                        ],
+                        "userProperties": [],
+                        "typeProperties": {
+                            "items": {
+                                "value": "@activity('Get Names from Snowflake').output.value",
+                                "type": "Expression"
+                            },
+                            "batchCount": 50,
+                            "activities": [
+                                {
+                                    "name": "Extract Names",
+                                    "description": "Split coma separated job IDs coming from a pipeline parameter and convert them into an array",
+                                    "type": "SetVariable",
+                                    "dependsOn": [],
+                                    "policy": {
+                                        "secureOutput": false,
+                                        "secureInput": false
+                                    },
+                                    "userProperties": [],
+                                    "typeProperties": {
+                                        "variableName": "Name",
+                                        "value": {
+                                            "value": "@split(item().NAMES,',')\n\n\n",
+                                            "type": "Expression"
+                                        }
+                                    }
+                                },
+                                {
+                                    "name": "Call API and Load into Snowflake",
+                                    "type": "ExecutePipeline",
+                                    "dependsOn": [
+                                        {
+                                            "activity": "Extract Names",
+                                            "dependencyConditions": [
+                                                "Succeeded"
+                                            ]
+                                        }
+                                    ],
+                                    "userProperties": [],
+                                    "typeProperties": {
+                                        "pipeline": {
+                                            "referenceName": "Call API and Load into Snowflake",
+                                            "type": "PipelineReference"
+                                        },
+                                        "waitOnCompletion": true,
+                                        "parameters": {
+                                            "Name": {
+                                                "value": "@variables('Name')",
+                                                "type": "Expression"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ],
+                "policy": {
+                    "elapsedTimeMetric": {}
+                },
+                "variables": {
+                    "Name": {
+                        "type": "Array"
+                    }
+                },
+                "folder": {
+                    "name": "Project"
+                },
+                "annotations": []
+            },
+            "dependsOn": [
+                "[concat(variables('factoryId'), '/datasets/Snowflake_Operations')]",
+                "[concat(variables('factoryId'), '/pipelines/Call API and Load into Snowflake')]"
+            ]
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/DS_Collector_CM_Rest')]",
+            "type": "Microsoft.DataFactory/factories/datasets",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "linkedServiceName": {
+                    "referenceName": "ls_collector_client_management_rest",
+                    "type": "LinkedServiceReference",
+                    "parameters": {
+                        "BaseURL": {
+                            "value": "@dataset().BaseURL",
+                            "type": "Expression"
+                        }
+                    }
+                },
+                "parameters": {
+                    "RelativeURL": {
+                        "type": "string"
+                    },
+                    "BaseURL": {
+                        "type": "string"
+                    }
+                },
+                "folder": {
+                    "name": "Analytics_Platform_Collector"
+                },
+                "annotations": [],
+                "type": "RestResource",
+                "typeProperties": {
+                    "relativeUrl": {
+                        "value": "@dataset().RelativeURL",
+                        "type": "Expression"
+                    }
+                },
+                "schema": []
+            },
+            "dependsOn": [
+                "[concat(variables('factoryId'), '/linkedServices/ls_collector_client_management_rest')]"
+            ]
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/Snowflake_Operations')]",
+            "type": "Microsoft.DataFactory/factories/datasets",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "linkedServiceName": {
+                    "referenceName": "collector_snowflake",
+                    "type": "LinkedServiceReference",
+                    "parameters": {
+                        "AKV_Name": {
+                            "value": "@dataset().AKV_Name",
+                            "type": "Expression"
+                        }
+                    }
+                },
+                "parameters": {
+                    "AKV_Name": {
+                        "type": "string"
+                    }
+                },
+                "folder": {
+                    "name": "Analytics_Platform_Collector"
+                },
+                "annotations": [],
+                "type": "SnowflakeTable",
+                "schema": [],
+                "typeProperties": {}
+            },
+            "dependsOn": [
+                "[concat(variables('factoryId'), '/linkedServices/collector_snowflake')]"
+            ]
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/Snowflake_Target')]",
+            "type": "Microsoft.DataFactory/factories/datasets",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "linkedServiceName": {
+                    "referenceName": "collector_snowflake",
+                    "type": "LinkedServiceReference",
+                    "parameters": {
+                        "AKV_Name": {
+                            "value": "@dataset().AKV_Name",
+                            "type": "Expression"
+                        }
+                    }
+                },
+                "parameters": {
+                    "TARGET_SCHEMA": {
+                        "type": "string"
+                    },
+                    "TARGET_TABLE": {
+                        "type": "string"
+                    },
+                    "AKV_Name": {
+                        "type": "string"
+                    }
+                },
+                "folder": {
+                    "name": "Analytics_Platform_Collector"
+                },
+                "annotations": [],
+                "type": "SnowflakeTable",
+                "schema": [],
+                "typeProperties": {
+                    "schema": {
+                        "value": "@dataset().TARGET_SCHEMA",
+                        "type": "Expression"
+                    },
+                    "table": {
+                        "value": "@dataset().TARGET_TABLE",
+                        "type": "Expression"
+                    }
+                }
+            },
+            "dependsOn": [
+                "[concat(variables('factoryId'), '/linkedServices/collector_snowflake')]"
+            ]
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/doorstep_json')]",
+            "type": "Microsoft.DataFactory/factories/datasets",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "linkedServiceName": {
+                    "referenceName": "collector_asa_doorstep_sas",
+                    "type": "LinkedServiceReference",
+                    "parameters": {
+                        "AKV_Name": "dev-use-collector-akv"
+                    }
+                },
+                "parameters": {
+                    "Source_File_Name": {
+                        "type": "string"
+                    }
+                },
+                "folder": {
+                    "name": "Project"
+                },
+                "annotations": [],
+                "type": "Json",
+                "typeProperties": {
+                    "location": {
+                        "type": "AzureBlobStorageLocation",
+                        "fileName": {
+                            "value": "@concat(\ndataset().Source_File_Name,\n'.json'\n)",
+                            "type": "Expression"
+                        },
+                        "folderPath": "files",
+                        "container": "doorstep"
+                    }
+                },
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "status": {
+                            "type": "integer"
+                        },
+                        "message": {
+                            "type": "string"
+                        },
+                        "data": {
+                            "type": "object",
+                            "properties": {
+                                "FGNL": {
+                                    "type": "object",
+                                    "properties": {
+                                        "gender": {
+                                            "type": "string"
+                                        },
+                                        "probability": {
+                                            "type": "string"
+                                        }
+                                    }
+                                },
+                                "WebGP": {
+                                    "type": "object",
+                                    "properties": {
+                                        "gender": {
+                                            "type": "string"
+                                        },
+                                        "probability": {
+                                            "type": "string"
+                                        }
+                                    }
+                                },
+                                "Face": {
+                                    "type": "object",
+                                    "properties": {
+                                        "gender": {
+                                            "type": "string"
+                                        },
+                                        "probability": {
+                                            "type": "string"
+                                        }
+                                    }
+                                },
+                                "Final": {
+                                    "type": "object",
+                                    "properties": {
+                                        "gender": {
+                                            "type": "string"
+                                        },
+                                        "m_proba": {
+                                            "type": "string"
+                                        },
+                                        "f_proba": {
+                                            "type": "string"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "dependsOn": [
+                "[concat(variables('factoryId'), '/linkedServices/collector_asa_doorstep_sas')]"
+            ]
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/collector_akv')]",
+            "type": "Microsoft.DataFactory/factories/linkedServices",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "parameters": {
+                    "AKV_Name": {
+                        "type": "string"
+                    }
+                },
+                "annotations": [],
+                "type": "AzureKeyVault",
+                "typeProperties": {
+                    "baseUrl": "[parameters('collector_akv_properties_typeProperties_baseUrl')]"
+                }
+            },
+            "dependsOn": []
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/collector_asa_doorstep_sas')]",
+            "type": "Microsoft.DataFactory/factories/linkedServices",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "parameters": {
+                    "AKV_Name": {
+                        "type": "string"
+                    }
+                },
+                "annotations": [],
+                "type": "AzureBlobStorage",
+                "typeProperties": {
+                    "sasUri": {
+                        "type": "AzureKeyVaultSecret",
+                        "store": {
+                            "referenceName": "collector_akv",
+                            "type": "LinkedServiceReference",
+                            "parameters": {
+                                "AKV_Name": {
+                                    "value": "@linkedService().AKV_Name",
+                                    "type": "Expression"
+                                }
+                            }
+                        },
+                        "secretName": "[parameters('collector_asa_doorstep_sas_properties_typeProperties_sasUri_secretName')]"
+                    }
+                }
+            },
+            "dependsOn": [
+                "[concat(variables('factoryId'), '/linkedServices/collector_akv')]"
+            ]
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/collector_snowflake')]",
+            "type": "Microsoft.DataFactory/factories/linkedServices",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "parameters": {
+                    "AKV_Name": {
+                        "type": "string"
+                    }
+                },
+                "annotations": [],
+                "type": "Snowflake",
+                "typeProperties": {
+                    "authenticationType": "Basic",
+                    "connectionString": {
+                        "type": "AzureKeyVaultSecret",
+                        "store": {
+                            "referenceName": "collector_akv",
+                            "type": "LinkedServiceReference",
+                            "parameters": {
+                                "AKV_Name": {
+                                    "value": "@linkedService().AKV_Name",
+                                    "type": "Expression"
+                                }
+                            }
+                        },
+                        "secretName": "[parameters('collector_snowflake_properties_typeProperties_connectionString_secretName')]"
+                    }
+                }
+            },
+            "dependsOn": [
+                "[concat(variables('factoryId'), '/linkedServices/collector_akv')]"
+            ]
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/ls_collector_client_management_rest')]",
+            "type": "Microsoft.DataFactory/factories/linkedServices",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "parameters": {
+                    "BaseURL": {
+                        "type": "string",
+                        "defaultValue": "https://api-dev.symend.io/clientmanagement/"
+                    }
+                },
+                "annotations": [],
+                "type": "RestService",
+                "typeProperties": {
+                    "url": "[parameters('ls_collector_client_management_rest_properties_typeProperties_url')]",
+                    "enableServerCertificateValidation": true,
+                    "authenticationType": "Anonymous"
+                }
+            },
+            "dependsOn": []
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/collector-private-endpoint')]",
+            "type": "Microsoft.DataFactory/factories/integrationRuntimes",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "type": "Managed",
+                "typeProperties": {
+                    "computeProperties": {
+                        "location": "AutoResolve",
+                        "dataFlowProperties": {
+                            "computeType": "General",
+                            "coreCount": 8,
+                            "timeToLive": 0,
+                            "cleanup": true
+                        },
+                        "pipelineExternalComputeScaleProperties": {
+                            "timeToLive": 60
+                        }
+                    }
+                },
+                "managedVirtualNetwork": {
+                    "type": "ManagedVirtualNetworkReference",
+                    "referenceName": "default"
+                }
+            },
+            "dependsOn": [
+                "[concat(variables('factoryId'), '/managedVirtualNetworks/default')]"
+            ]
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/default')]",
+            "type": "Microsoft.DataFactory/factories/managedVirtualNetworks",
+            "apiVersion": "2018-06-01",
+            "properties": {},
+            "dependsOn": []
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/default/adfcollectorpe')]",
+            "type": "Microsoft.DataFactory/factories/managedVirtualNetworks/managedPrivateEndpoints",
+            "apiVersion": "2018-06-01",
+            "properties": {
+                "privateLinkResourceId": "[parameters('adfcollectorpe_properties_privateLinkResourceId')]",
+                "groupId": "[parameters('adfcollectorpe_properties_groupId')]"
+            },
+            "dependsOn": [
+                "[concat(variables('factoryId'), '/managedVirtualNetworks/default')]"
+            ]
+        }
+    ]
+}

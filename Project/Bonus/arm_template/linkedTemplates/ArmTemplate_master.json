@@ -1,0 +1,84 @@
+{
+    "$schema": "http://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "factoryName": {
+            "type": "string",
+            "metadata": "Data Factory name",
+            "defaultValue": "dev-use-collector-adf"
+        },
+        "collector_akv_properties_typeProperties_baseUrl": {
+            "type": "string",
+            "defaultValue": "https://@{linkedService().AKV_Name}.vault.azure.net/"
+        },
+        "collector_asa_doorstep_sas_properties_typeProperties_sasUri_secretName": {
+            "type": "string",
+            "defaultValue": "DOORSTEP-ASA-sas-uri-rw"
+        },
+        "collector_snowflake_properties_typeProperties_connectionString_secretName": {
+            "type": "string",
+            "defaultValue": "analytics-snowflake-loader-adf-connection-string"
+        },
+        "ls_collector_client_management_rest_properties_typeProperties_url": {
+            "type": "string",
+            "defaultValue": "@{linkedService().BaseURL}"
+        },
+        "adfcollectorpe_properties_privateLinkResourceId": {
+            "type": "string",
+            "defaultValue": "/subscriptions/4523e73e-96d4-4b33-b9b9-0f308b2cfae4/resourceGroups/dev-sql-use/providers/Microsoft.Sql/servers/dev-clusterinfra-use"
+        },
+        "adfcollectorpe_properties_groupId": {
+            "type": "string",
+            "defaultValue": "sqlServer"
+        },
+        "containerUri": {
+            "type": "string",
+            "metadata": "URI to storage account containing linked ARM templates"
+        },
+        "containerSasToken": {
+            "type": "string",
+            "metadata": "Sas token to storage account containing linked ARM templates"
+        }
+    },
+    "variables": {
+        "factoryId": "[concat('Microsoft.DataFactory/factories/', parameters('factoryName'))]"
+    },
+    "resources": [
+        {
+            "name": "dev-use-collector-adf_ArmTemplate_0",
+            "type": "Microsoft.Resources/deployments",
+            "apiVersion": "2018-02-01",
+            "properties": {
+                "mode": "incremental",
+                "templateLink": {
+                    "uri": "[concat(parameters('containerUri'), '/ArmTemplate_0.json', parameters('containerSasToken'))]",
+                    "contentVersion": "1.0.0.0"
+                },
+                "parameters": {
+                    "factoryName": {
+                        "value": "[parameters('factoryName')]"
+                    },
+                    "collector_akv_properties_typeProperties_baseUrl": {
+                        "value": "[parameters('collector_akv_properties_typeProperties_baseUrl')]"
+                    },
+                    "ls_collector_client_management_rest_properties_typeProperties_url": {
+                        "value": "[parameters('ls_collector_client_management_rest_properties_typeProperties_url')]"
+                    },
+                    "collector_asa_doorstep_sas_properties_typeProperties_sasUri_secretName": {
+                        "value": "[parameters('collector_asa_doorstep_sas_properties_typeProperties_sasUri_secretName')]"
+                    },
+                    "collector_snowflake_properties_typeProperties_connectionString_secretName": {
+                        "value": "[parameters('collector_snowflake_properties_typeProperties_connectionString_secretName')]"
+                    },
+                    "adfcollectorpe_properties_privateLinkResourceId": {
+                        "value": "[parameters('adfcollectorpe_properties_privateLinkResourceId')]"
+                    },
+                    "adfcollectorpe_properties_groupId": {
+                        "value": "[parameters('adfcollectorpe_properties_groupId')]"
+                    }
+                }
+            },
+            "dependsOn": []
+        }
+    ]
+}
